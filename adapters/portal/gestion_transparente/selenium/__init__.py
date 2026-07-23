@@ -1,0 +1,43 @@
+from adapters.portal.gestion_transparente.selenium.browser_session import (
+    BrowserSession,
+    BrowserSessionError,
+    BrowserSessionNotStartedError,
+)
+from adapters.portal.gestion_transparente.selenium.driver_factory import (
+    BrowserSettings,
+    BrowserStartupError,
+    DriverFactory,
+    WebDriverFactory,
+)
+from adapters.portal.gestion_transparente.selenium.element_resolver import (
+    ElementResolver,
+    ResolutionCondition,
+)
+from adapters.portal.gestion_transparente.selenium.gestion_transparente_portal import (
+    GestionTransparentePortal,
+)
+from adapters.portal.gestion_transparente.selenium.waits import (
+    SeleniumWaits,
+)
+from adapters.portal.gestion_transparente.selenium.diagnostics import (
+    BrowserDiagnostics,
+    DiagnosticEvidence,
+    DiagnosticsCaptureError,
+)
+
+__all__ = [
+    "BrowserSession",
+    "BrowserSessionError",
+    "BrowserSessionNotStartedError",
+    "BrowserSettings",
+    "BrowserStartupError",
+    "DriverFactory",
+    "ElementResolver",
+    "GestionTransparentePortal",
+    "ResolutionCondition",
+    "SeleniumWaits",
+    "WebDriverFactory",
+    "BrowserDiagnostics",
+    "DiagnosticEvidence",
+    "DiagnosticsCaptureError",
+]

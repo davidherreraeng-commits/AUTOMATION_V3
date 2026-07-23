@@ -1,0 +1,1 @@
+"""Adaptadores externos del módulo de automatización."""

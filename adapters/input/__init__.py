@@ -1,0 +1,1 @@
+"""Adaptadores de entrada del módulo de automatización."""
