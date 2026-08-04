@@ -31,3 +31,5 @@ screenshots/
 .DS_Store
 Thumbs.db
 artifacts/
+
+.backups/
