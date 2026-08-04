@@ -5,10 +5,22 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from application.ports.execution_repository import ExecutionRepositoryError
 from application.services.batch_creation_service import BatchCreationService
+from application.services.batch_contract_execution_service import (
+    BatchContractExecutionService,
+)
 from application.services.batch_execution_service import BatchExecutionService
 from application.services.batch_portal_probe_service import (
     BatchPortalProbeService,
+)
+from domain.errors.batch_contract_execution_errors import (
+    BatchContractExecutionBlockedError,
+    BatchContractExecutionConfirmationError,
+    BatchContractExecutionIdentityError,
+    BatchContractExecutionInProgressError,
+    BatchContractExecutionStateError,
+    BatchContractItemNotFoundError,
 )
 from domain.errors.batch_execution_errors import (
     BatchExecutionBlockedError,
@@ -32,10 +44,14 @@ from interfaces.api.dependencies import (
     CurrentUser,
     Superuser,
     get_batch_creation_service,
+    get_batch_contract_execution_service,
     get_batch_execution_service,
     get_batch_portal_probe_service,
 )
 from interfaces.api.schemas.batches import (
+    BatchContractExecutionPreflightResponse,
+    BatchContractExecutionRequest,
+    BatchContractExecutionResponse,
     BatchAssistantProbeResponse,
     BatchContractSaveProbeRequest,
     BatchContractSaveProbeResponse,
@@ -196,6 +212,172 @@ def execution_preflight(
             detail="No fue posible comprobar el lote en este momento.",
         ) from error
     return BatchExecutionPreflightResponse.from_domain(preflight)
+
+
+
+@router.get(
+    "/{batch_id}/contracts/{item_id}/execution/preflight",
+    response_model=BatchContractExecutionPreflightResponse,
+)
+def contract_execution_preflight(
+    batch_id: UUID,
+    item_id: UUID,
+    actor: Superuser,
+    service: Annotated[
+        BatchContractExecutionService,
+        Depends(get_batch_contract_execution_service),
+    ],
+) -> BatchContractExecutionPreflightResponse:
+    try:
+        preflight = service.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+        )
+    except BatchNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except BatchContractItemNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except (
+        BatchRepositoryError,
+        ExecutionRepositoryError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "No fue posible comprobar el contrato seleccionado."
+            ),
+        ) from error
+
+    return BatchContractExecutionPreflightResponse.from_domain(preflight)
+
+
+@router.post(
+    "/{batch_id}/contracts/{item_id}/execution",
+    response_model=BatchContractExecutionResponse,
+)
+def execute_selected_contract(
+    batch_id: UUID,
+    item_id: UUID,
+    payload: BatchContractExecutionRequest,
+    actor: Superuser,
+    service: Annotated[
+        BatchContractExecutionService,
+        Depends(get_batch_contract_execution_service),
+    ],
+) -> BatchContractExecutionResponse:
+    try:
+        result = service.execute(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+            confirmation=payload.confirmation,
+            execution_id=payload.execution_id,
+        )
+    except BatchNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except BatchContractItemNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except BatchContractExecutionConfirmationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "WRITE_CONFIRMATION_REQUIRED",
+                "message": str(error),
+                "required_confirmation": error.required_confirmation,
+            },
+        ) from error
+    except BatchContractExecutionBlockedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "CONTRACT_EXECUTION_BLOCKED",
+                "message": str(error),
+                "issues": [
+                    {"code": code, "message": message}
+                    for code, message in error.issues
+                ],
+            },
+        ) from error
+    except (
+        BatchContractExecutionIdentityError,
+        BatchContractExecutionInProgressError,
+        BatchContractExecutionStateError,
+        BatchExecutionInProgressError,
+        BatchNotReadyForExecutionError,
+        BatchExecutionStateError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except (
+        BatchRepositoryError,
+        ExecutionRepositoryError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "No fue posible ejecutar el contrato seleccionado."
+            ),
+        ) from error
+
+    return BatchContractExecutionResponse.from_domain(result)
+
+
+@router.get(
+    "/{batch_id}/contracts/{item_id}/execution",
+    response_model=BatchContractExecutionResponse,
+)
+def get_selected_contract_execution(
+    batch_id: UUID,
+    item_id: UUID,
+    actor: Superuser,
+    service: Annotated[
+        BatchContractExecutionService,
+        Depends(get_batch_contract_execution_service),
+    ],
+) -> BatchContractExecutionResponse:
+    try:
+        result = service.status(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+        )
+    except BatchNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except BatchContractItemNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except (
+        BatchRepositoryError,
+        ExecutionRepositoryError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "No fue posible consultar el checkpoint del contrato."
+            ),
+        ) from error
+
+    return BatchContractExecutionResponse.from_domain(result)
 
 
 @router.post(

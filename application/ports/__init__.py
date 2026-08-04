@@ -1,3 +1,4 @@
+from application.ports.contract_executor import ContractExecutor
 from application.ports.batch_portal_probe import (
     BatchAssistantProbeResult,
     BatchContractSaveProbeResult,
@@ -32,6 +33,7 @@ from application.ports.execution_repository import (
 )
 
 __all__ = [
+    "ContractExecutor",
     "BatchAssistantProbeResult",
     "BatchContractSaveProbeResult",
     "BatchContractSupervisorLinkProbeResult",

@@ -6,6 +6,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from application.dto.batch_contract_execution import (
+    BatchContractExecutionPreflight,
+    BatchContractExecutionResult,
+)
 from application.dto.batch_execution import BatchExecutionPreflight
 from application.dto.batch_portal_probe import (
     BatchAssistantProbeOutcome,
@@ -44,6 +48,20 @@ class BatchCreateRequest(BaseModel):
             raise ValueError("Las filas seleccionadas deben ser iguales o superiores a 2.")
         if len(normalized) != len(set(normalized)):
             raise ValueError("Las filas seleccionadas no pueden repetirse.")
+        return normalized
+
+
+
+class BatchContractExecutionRequest(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=180)
+    execution_id: UUID | None = None
+
+    @field_validator("confirmation")
+    @classmethod
+    def normalize_confirmation(cls, value: str) -> str:
+        normalized = " ".join(str(value).strip().split())
+        if not normalized:
+            raise ValueError("La confirmación es obligatoria.")
         return normalized
 
 
@@ -290,6 +308,175 @@ class BatchExecutionStatusResponse(BaseModel):
             failed_count=counts["FAILED"],
             manual_review_count=counts["MANUAL_REVIEW"],
             batch=BatchResponse.from_domain(batch),
+        )
+
+
+
+class BatchContractExecutionIssueResponse(BaseModel):
+    code: str
+    message: str
+    blocking: bool
+
+
+class BatchContractExecutionPreflightResponse(BaseModel):
+    batch_id: UUID
+    item_id: UUID
+    row_number: int
+    contract_number: str
+    dependency: str
+    batch_status: str
+    item_status: str
+    required_confirmation: str
+    execution_enabled: bool
+    executor_available: bool
+    credentials_configured: bool
+    credentials_recently_tested: bool
+    active_in_process: bool
+    execution_id: UUID | None
+    execution_status: str | None
+    last_completed_step: str | None
+    current_step: str | None
+    last_failed_step: str | None
+    attempt_count: int
+    resumable: bool
+    checked_at: datetime
+    can_execute: bool
+    issues: list[BatchContractExecutionIssueResponse]
+
+    @classmethod
+    def from_domain(
+        cls,
+        preflight: BatchContractExecutionPreflight,
+    ) -> "BatchContractExecutionPreflightResponse":
+        execution = preflight.execution
+        return cls(
+            batch_id=preflight.batch.batch_id,
+            item_id=preflight.item.item_id,
+            row_number=preflight.item.source_row_number,
+            contract_number=preflight.item.contract.contract_number,
+            dependency=preflight.batch.dependency,
+            batch_status=preflight.batch.status.value,
+            item_status=preflight.item.status.value,
+            required_confirmation=preflight.required_confirmation,
+            execution_enabled=preflight.execution_enabled,
+            executor_available=preflight.executor_available,
+            credentials_configured=preflight.credentials_configured,
+            credentials_recently_tested=(
+                preflight.credentials_recently_tested
+            ),
+            active_in_process=preflight.active_in_process,
+            execution_id=(
+                execution.execution_id if execution is not None else None
+            ),
+            execution_status=(
+                execution.status.value if execution is not None else None
+            ),
+            last_completed_step=(
+                execution.last_completed_step.value
+                if execution is not None
+                else None
+            ),
+            current_step=(
+                execution.current_step.value
+                if execution is not None
+                and execution.current_step is not None
+                else None
+            ),
+            last_failed_step=(
+                execution.last_failed_step.value
+                if execution is not None
+                and execution.last_failed_step is not None
+                else None
+            ),
+            attempt_count=(
+                execution.attempt_count if execution is not None else 0
+            ),
+            resumable=preflight.resumable,
+            checked_at=preflight.checked_at,
+            can_execute=preflight.can_execute,
+            issues=[
+                BatchContractExecutionIssueResponse(
+                    code=issue.code,
+                    message=issue.message,
+                    blocking=issue.blocking,
+                )
+                for issue in preflight.issues
+            ],
+        )
+
+
+class BatchContractExecutionResponse(BaseModel):
+    batch_id: UUID
+    item_id: UUID
+    row_number: int
+    contract_number: str
+    dependency: str
+    batch_status: str
+    item_status: str
+    required_confirmation: str
+    active_in_process: bool
+    execution_id: UUID | None
+    execution_status: str | None
+    last_completed_step: str | None
+    current_step: str | None
+    last_failed_step: str | None
+    attempt_count: int
+    checkpoint_updated_at: datetime | None
+    transition_count: int
+    success: bool
+    resumable: bool
+    retry_pending: bool
+    requires_manual_review: bool
+    operational_message: str
+    error_code: str | None
+    technical_detail: str | None
+
+    @classmethod
+    def from_domain(
+        cls,
+        result: BatchContractExecutionResult,
+    ) -> "BatchContractExecutionResponse":
+        return cls(
+            batch_id=result.batch.batch_id,
+            item_id=result.item.item_id,
+            row_number=result.item.source_row_number,
+            contract_number=result.item.contract.contract_number,
+            dependency=result.batch.dependency,
+            batch_status=result.batch_status.value,
+            item_status=result.item_status.value,
+            required_confirmation=result.required_confirmation,
+            active_in_process=result.active_in_process,
+            execution_id=result.execution_id,
+            execution_status=(
+                result.execution_status.value
+                if result.execution_status is not None
+                else None
+            ),
+            last_completed_step=(
+                result.last_completed_step.value
+                if result.last_completed_step is not None
+                else None
+            ),
+            current_step=(
+                result.current_step.value
+                if result.current_step is not None
+                else None
+            ),
+            last_failed_step=(
+                result.last_failed_step.value
+                if result.last_failed_step is not None
+                else None
+            ),
+            attempt_count=result.attempt_count,
+            checkpoint_updated_at=result.checkpoint_updated_at,
+            transition_count=result.transition_count,
+            success=result.success,
+            resumable=result.resumable,
+            retry_pending=result.retry_pending,
+            requires_manual_review=result.requires_manual_review,
+            operational_message=result.operational_message,
+            error_code=result.error_code,
+            technical_detail=result.technical_detail,
         )
 
 

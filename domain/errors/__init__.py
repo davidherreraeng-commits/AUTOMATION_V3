@@ -1,3 +1,12 @@
+from domain.errors.batch_contract_execution_errors import (
+    BatchContractExecutionBlockedError,
+    BatchContractExecutionConfirmationError,
+    BatchContractExecutionError,
+    BatchContractExecutionIdentityError,
+    BatchContractExecutionInProgressError,
+    BatchContractExecutionStateError,
+    BatchContractItemNotFoundError,
+)
 from domain.errors.batch_execution_errors import (
     BatchExecutionBlockedError,
     BatchExecutionError,
@@ -41,6 +50,13 @@ from domain.errors.portal_errors import (
 )
 
 __all__ = [
+    "BatchContractExecutionBlockedError",
+    "BatchContractExecutionConfirmationError",
+    "BatchContractExecutionError",
+    "BatchContractExecutionIdentityError",
+    "BatchContractExecutionInProgressError",
+    "BatchContractExecutionStateError",
+    "BatchContractItemNotFoundError",
     "BatchExecutionBlockedError",
     "BatchExecutionError",
     "BatchExecutionInProgressError",

@@ -1,3 +1,6 @@
+from application.services.batch_contract_execution_service import (
+    BatchContractExecutionService,
+)
 from application.services.batch_portal_probe_service import (
     BatchPortalProbeService,
 )
@@ -12,6 +15,7 @@ from application.services.portal_credential_service import (
 from application.services.user_management_service import UserManagementService
 
 __all__ = [
+    "BatchContractExecutionService",
     "BatchExecutionService",
     "BatchCreationService",
     "AuthenticationService",

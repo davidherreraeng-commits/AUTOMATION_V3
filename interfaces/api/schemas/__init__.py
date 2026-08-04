@@ -1,4 +1,7 @@
 from interfaces.api.schemas.batches import (
+    BatchContractExecutionPreflightResponse,
+    BatchContractExecutionRequest,
+    BatchContractExecutionResponse,
     BatchContractResponse,
     BatchContractSaveProbeRequest,
     BatchContractSaveProbeResponse,
@@ -51,6 +54,9 @@ from interfaces.api.schemas.users import (
 )
 
 __all__ = [
+    "BatchContractExecutionPreflightResponse",
+    "BatchContractExecutionRequest",
+    "BatchContractExecutionResponse",
     "BatchExecutionIssueResponse",
     "BatchExecutionPreflightResponse",
     "BatchExecutionStatusResponse",

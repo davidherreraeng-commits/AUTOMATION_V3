@@ -1,3 +1,8 @@
+from application.dto.batch_contract_execution import (
+    BatchContractExecutionIssue,
+    BatchContractExecutionPreflight,
+    BatchContractExecutionResult,
+)
 from application.dto.batch_portal_probe import (
     BatchAssistantProbeOutcome,
     BatchContractSaveProbeOutcome,
@@ -31,6 +36,9 @@ from application.dto.step_execution import (
 )
 
 __all__ = [
+    "BatchContractExecutionIssue",
+    "BatchContractExecutionPreflight",
+    "BatchContractExecutionResult",
     "BatchAssistantProbeOutcome",
     "BatchContractSaveProbeOutcome",
     "BatchContractSupervisorLinkProbeOutcome",

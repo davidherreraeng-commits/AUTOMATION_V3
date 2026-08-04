@@ -7,17 +7,30 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from adapters.input.excel.upload_validation import ExcelUploadValidator
 from adapters.persistence.sqlite.batch_repository import SQLiteBatchRepository
+from adapters.persistence.sqlite.execution_repository import (
+    SQLiteExecutionRepository,
+)
 from adapters.persistence.sqlite.portal_credential_repository import (
     SQLitePortalCredentialRepository,
 )
 from adapters.persistence.sqlite.user_repository import SQLiteUserRepository
 from application.ports.batch_execution_runner import BatchExecutionRunner
 from application.ports.batch_portal_probe import BatchPortalProbe
+from application.ports.contract_executor import ContractExecutor
 from application.ports.contract_file_validator import ContractFileValidator
 from application.ports.portal_credential_verifier import (
     PortalCredentialVerifier,
 )
+from application.services.batch_contract_execution_service import (
+    BatchContractExecutionService,
+)
 from application.services.batch_execution_service import BatchExecutionService
+from application.use_cases.execute_contract_in_session import (
+    ExecuteContractInSession,
+)
+from application.workflow.checkpoint_service import (
+    ExecutionCheckpointService,
+)
 from application.services.batch_portal_probe_service import (
     BatchPortalProbeService,
 )
@@ -45,6 +58,7 @@ def create_app(
     contract_file_validator: ContractFileValidator | None = None,
     batch_execution_runner: BatchExecutionRunner | None = None,
     batch_portal_probe: BatchPortalProbe | None = None,
+    contract_executor: ContractExecutor | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
 
@@ -66,6 +80,11 @@ def create_app(
             resolved_settings.resolved_database_path
         )
         batches.initialize()
+
+        executions = SQLiteExecutionRepository(
+            resolved_settings.resolved_database_path
+        )
+        checkpoints = ExecutionCheckpointService(executions)
 
         file_validator = contract_file_validator or ExcelUploadValidator(
             upload_directory=resolved_settings.resolved_upload_directory,
@@ -104,11 +123,58 @@ def create_app(
         app.state.user_repository = users
         app.state.portal_credential_repository = portal_credentials
         app.state.batch_repository = batches
+        app.state.execution_repository = executions
+        app.state.execution_checkpoint_service = checkpoints
         app.state.contract_file_validator = file_validator
         app.state.password_hasher = ScryptPasswordHasher()
         app.state.jwt_service = JWTService(resolved_settings)
         app.state.credential_cipher = credential_cipher
         app.state.portal_credential_verifier = verifier
+
+        resolved_contract_executor = contract_executor
+        if (
+            resolved_contract_executor is None
+            and credential_cipher is not None
+        ):
+            from adapters.portal.gestion_transparente.selenium import (
+                SeleniumContractPortalSessionFactory,
+            )
+
+            sessions = SeleniumContractPortalSessionFactory(
+                login_url=resolved_settings.portal_login_url,
+                credentials=portal_credentials,
+                cipher=credential_cipher,
+                headless=resolved_settings.batch_execution_headless,
+                timeout_seconds=(
+                    resolved_settings.batch_execution_timeout_seconds
+                ),
+                driver_path=resolved_settings.portal_driver_path,
+                chrome_binary=resolved_settings.portal_chrome_binary,
+            )
+            resolved_contract_executor = ExecuteContractInSession(
+                sessions=sessions,
+                checkpoints=checkpoints,
+            )
+
+        app.state.batch_contract_execution_service = (
+            BatchContractExecutionService(
+                batches=batches,
+                credentials=portal_credentials,
+                checkpoints=checkpoints,
+                executor=resolved_contract_executor,
+                execution_enabled=(
+                    resolved_settings.batch_execution_enabled
+                ),
+                credential_max_age_hours=(
+                    resolved_settings
+                    .batch_execution_credential_max_age_hours
+                ),
+                reject_unit_test_values=(
+                    resolved_settings
+                    .batch_execution_reject_unit_test_values
+                ),
+            )
+        )
 
         runner = batch_execution_runner
         if runner is None:

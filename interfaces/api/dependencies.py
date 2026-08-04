@@ -17,6 +17,9 @@ from application.ports.portal_credential_verifier import (
     PortalCredentialVerifier,
 )
 from application.services.authentication_service import AuthenticationService
+from application.services.batch_contract_execution_service import (
+    BatchContractExecutionService,
+)
 from application.services.batch_execution_service import BatchExecutionService
 from application.services.batch_creation_service import BatchCreationService
 from application.services.batch_portal_probe_service import (
@@ -69,6 +72,12 @@ def get_batch_repository(request: Request) -> SQLiteBatchRepository:
 
 def get_batch_execution_service(request: Request) -> BatchExecutionService:
     return request.app.state.batch_execution_service
+
+
+def get_batch_contract_execution_service(
+    request: Request,
+) -> BatchContractExecutionService:
+    return request.app.state.batch_contract_execution_service
 
 
 def get_batch_portal_probe_service(
