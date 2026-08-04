@@ -8,7 +8,6 @@ import FindInPageOutlinedIcon from "@mui/icons-material/FindInPageOutlined";
 import EditNoteOutlinedIcon from "@mui/icons-material/EditNoteOutlined";
 import DataObjectOutlinedIcon from "@mui/icons-material/DataObjectOutlined";
 import AccountBalanceOutlinedIcon from "@mui/icons-material/AccountBalanceOutlined";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import CancelOutlinedIcon from "@mui/icons-material/CancelOutlined";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
@@ -34,6 +33,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/axiosConfig";
 import { useAuth } from "../auth/useAuth";
+import BatchContractExecutionPanel from "../components/BatchContractExecutionPanel";
 
 function getApiError(error, fallback) {
   const detail = error.response?.data?.detail;
@@ -876,27 +876,6 @@ function Home() {
     }
   };
 
-  const startExecution = async () => {
-    if (!createdBatch || !preflight?.can_execute) return;
-    setStartingExecution(true);
-    try {
-      const response = await api.post(
-        `/batches/${createdBatch.batch_id}/execution`,
-      );
-      setExecutionStatus(response.data);
-      setCreatedBatch(response.data.batch);
-      showMessage("success", "La ejecución controlada del lote fue iniciada.");
-    } catch (error) {
-      showMessage(
-        "error",
-        getApiError(error, "No fue posible iniciar la ejecución del lote."),
-      );
-      await checkExecution();
-    } finally {
-      setStartingExecution(false);
-    }
-  };
-
   const cancelBatch = async () => {
     if (!createdBatch || createdBatch.status !== "READY") return;
     setCancellingBatch(true);
@@ -1538,30 +1517,6 @@ function Home() {
 
 
                       <Button
-                        variant="contained"
-                        startIcon={
-                          startingExecution ? (
-                            <CircularProgress size={18} color="inherit" />
-                          ) : (
-                            <PlayArrowIcon />
-                          )
-                        }
-                        onClick={startExecution}
-                        disabled={
-                          !preflight?.can_execute ||
-                          startingExecution ||
-                          portalProbeBusy ||
-                          createdBatch.status !== "READY"
-                        }
-                        sx={{
-                          backgroundColor: "#005026",
-                          "&:hover": { backgroundColor: "#00441f" },
-                        }}
-                      >
-                        {startingExecution ? "Iniciando…" : "Ejecutar lote"}
-                      </Button>
-
-                      <Button
                         color="error"
                         variant="text"
                         startIcon={
@@ -1600,6 +1555,14 @@ function Home() {
                         ))}
                       </Stack>
                     )}
+
+                    <BatchContractExecutionPanel
+                      batch={createdBatch}
+                      user={user}
+                      onBatchChange={setCreatedBatch}
+                      onBusyChange={setStartingExecution}
+                      onNotify={showMessage}
+                    />
 
                     {portalProbe && (
                       <Alert
