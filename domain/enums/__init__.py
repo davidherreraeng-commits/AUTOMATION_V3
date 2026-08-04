@@ -3,6 +3,7 @@ from domain.enums.contract_step import ContractStep
 from domain.enums.contractor_nature import ContractorNature
 from domain.enums.error_category import ErrorCategory
 from domain.enums.execution_status import ExecutionStatus
+from domain.enums.execution_mode import ExecutionMode
 from domain.enums.user_role import UserRole
 
 __all__ = [
@@ -12,5 +13,6 @@ __all__ = [
     "ContractorNature",
     "ErrorCategory",
     "ExecutionStatus",
+    "ExecutionMode",
     "UserRole",
 ]

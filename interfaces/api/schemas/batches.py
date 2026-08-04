@@ -25,7 +25,9 @@ from application.dto.batch_portal_probe import (
     BatchHeaderValidationProbeOutcome,
     BatchPortalProbeOutcome,
 )
+from domain.enums import ExecutionMode
 from domain.models.contract_batch import BatchContract, ContractBatch
+from application.dto.execution_evidence import ContractExecutionEvidence
 
 
 class BatchCreateRequest(BaseModel):
@@ -55,6 +57,7 @@ class BatchCreateRequest(BaseModel):
 class BatchContractExecutionRequest(BaseModel):
     confirmation: str = Field(min_length=1, max_length=180)
     execution_id: UUID | None = None
+    mode: ExecutionMode = ExecutionMode.DRY_RUN
 
     @field_validator("confirmation")
     @classmethod
@@ -324,6 +327,11 @@ class BatchContractExecutionPreflightResponse(BaseModel):
     row_number: int
     contract_number: str
     dependency: str
+    mode: ExecutionMode
+    writes_to_portal: bool
+    real_write_enabled: bool
+    simulation_available: bool
+    latest_correlation_id: UUID | None
     batch_status: str
     item_status: str
     required_confirmation: str
@@ -355,6 +363,11 @@ class BatchContractExecutionPreflightResponse(BaseModel):
             row_number=preflight.item.source_row_number,
             contract_number=preflight.item.contract.contract_number,
             dependency=preflight.batch.dependency,
+            mode=preflight.mode,
+            writes_to_portal=preflight.mode is ExecutionMode.REAL,
+            real_write_enabled=preflight.real_write_enabled,
+            simulation_available=preflight.simulation_available,
+            latest_correlation_id=preflight.latest_correlation_id,
             batch_status=preflight.batch.status.value,
             item_status=preflight.item.status.value,
             required_confirmation=preflight.required_confirmation,
@@ -411,6 +424,10 @@ class BatchContractExecutionResponse(BaseModel):
     row_number: int
     contract_number: str
     dependency: str
+    mode: ExecutionMode
+    writes_to_portal: bool
+    correlation_id: UUID | None
+    evidence_count: int
     batch_status: str
     item_status: str
     required_confirmation: str
@@ -442,6 +459,10 @@ class BatchContractExecutionResponse(BaseModel):
             row_number=result.item.source_row_number,
             contract_number=result.item.contract.contract_number,
             dependency=result.batch.dependency,
+            mode=result.mode,
+            writes_to_portal=result.writes_to_portal,
+            correlation_id=result.correlation_id,
+            evidence_count=result.evidence_count,
             batch_status=result.batch_status.value,
             item_status=result.item_status.value,
             required_confirmation=result.required_confirmation,
@@ -1030,3 +1051,97 @@ class BatchHeaderValidationProbeResponse(BaseModel):
         data["missing_controls"] = list(outcome.missing_controls)
         return cls(**data)
 
+
+
+class ExecutionEvidenceEventResponse(BaseModel):
+    sequence: int
+    step: str | None
+    outcome: str
+    message: str | None
+    recorded_at: datetime
+    metadata: dict[str, object]
+
+
+class ContractExecutionEvidenceResponse(BaseModel):
+    correlation_id: UUID
+    mode: ExecutionMode
+    batch_id: UUID
+    item_id: UUID
+    contract_number: str
+    dependency: str
+    actor_username: str
+    actor_user_id: int | None
+    status: str
+    success: bool
+    started_at: datetime
+    completed_at: datetime
+    required_confirmation: str
+    operational_message: str
+    execution_id: UUID | None
+    execution_status: str | None
+    last_completed_step: str | None
+    current_step: str | None
+    last_failed_step: str | None
+    attempt_count: int
+    error_code: str | None
+    technical_detail: str | None
+    evidence_count: int
+    events: list[ExecutionEvidenceEventResponse]
+
+    @classmethod
+    def from_domain(
+        cls,
+        evidence: ContractExecutionEvidence,
+    ) -> "ContractExecutionEvidenceResponse":
+        return cls(
+            correlation_id=evidence.correlation_id,
+            mode=evidence.mode,
+            batch_id=evidence.batch_id,
+            item_id=evidence.item_id,
+            contract_number=evidence.contract_number,
+            dependency=evidence.dependency,
+            actor_username=evidence.actor_username,
+            actor_user_id=evidence.actor_user_id,
+            status=evidence.status,
+            success=evidence.success,
+            started_at=evidence.started_at,
+            completed_at=evidence.completed_at,
+            required_confirmation=evidence.required_confirmation,
+            operational_message=evidence.operational_message,
+            execution_id=evidence.execution_id,
+            execution_status=(
+                evidence.execution_status.value
+                if evidence.execution_status is not None
+                else None
+            ),
+            last_completed_step=(
+                evidence.last_completed_step.value
+                if evidence.last_completed_step is not None
+                else None
+            ),
+            current_step=(
+                evidence.current_step.value
+                if evidence.current_step is not None
+                else None
+            ),
+            last_failed_step=(
+                evidence.last_failed_step.value
+                if evidence.last_failed_step is not None
+                else None
+            ),
+            attempt_count=evidence.attempt_count,
+            error_code=evidence.error_code,
+            technical_detail=evidence.technical_detail,
+            evidence_count=evidence.evidence_count,
+            events=[
+                ExecutionEvidenceEventResponse(
+                    sequence=event.sequence,
+                    step=event.step.value if event.step is not None else None,
+                    outcome=event.outcome,
+                    message=event.message,
+                    recorded_at=event.recorded_at,
+                    metadata=dict(event.metadata),
+                )
+                for event in evidence.events
+            ],
+        )

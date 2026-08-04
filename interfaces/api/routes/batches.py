@@ -6,9 +6,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from application.ports.execution_repository import ExecutionRepositoryError
+from application.ports.execution_evidence_repository import (
+    ExecutionEvidenceRepositoryError,
+)
 from application.services.batch_creation_service import BatchCreationService
-from application.services.batch_contract_execution_service import (
-    BatchContractExecutionService,
+from application.services.controlled_batch_contract_execution_service import (
+    ControlledBatchContractExecutionService,
 )
 from application.services.batch_execution_service import BatchExecutionService
 from application.services.batch_portal_probe_service import (
@@ -21,6 +24,11 @@ from domain.errors.batch_contract_execution_errors import (
     BatchContractExecutionInProgressError,
     BatchContractExecutionStateError,
     BatchContractItemNotFoundError,
+)
+from domain.enums import ExecutionMode
+from domain.errors.execution_evidence_errors import (
+    ExecutionEvidenceContextError,
+    ExecutionEvidenceNotFoundError,
 )
 from domain.errors.batch_execution_errors import (
     BatchExecutionBlockedError,
@@ -52,6 +60,7 @@ from interfaces.api.schemas.batches import (
     BatchContractExecutionPreflightResponse,
     BatchContractExecutionRequest,
     BatchContractExecutionResponse,
+    ContractExecutionEvidenceResponse,
     BatchAssistantProbeResponse,
     BatchContractSaveProbeRequest,
     BatchContractSaveProbeResponse,
@@ -224,15 +233,17 @@ def contract_execution_preflight(
     item_id: UUID,
     actor: Superuser,
     service: Annotated[
-        BatchContractExecutionService,
+        ControlledBatchContractExecutionService,
         Depends(get_batch_contract_execution_service),
     ],
+    mode: ExecutionMode = Query(default=ExecutionMode.DRY_RUN),
 ) -> BatchContractExecutionPreflightResponse:
     try:
         preflight = service.preflight(
             batch_id=batch_id,
             item_id=item_id,
             dependency=actor.dependency,
+            mode=mode,
         )
     except BatchNotFoundError as error:
         raise HTTPException(
@@ -247,6 +258,7 @@ def contract_execution_preflight(
     except (
         BatchRepositoryError,
         ExecutionRepositoryError,
+        ExecutionEvidenceRepositoryError,
     ) as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -268,7 +280,7 @@ def execute_selected_contract(
     payload: BatchContractExecutionRequest,
     actor: Superuser,
     service: Annotated[
-        BatchContractExecutionService,
+        ControlledBatchContractExecutionService,
         Depends(get_batch_contract_execution_service),
     ],
 ) -> BatchContractExecutionResponse:
@@ -279,6 +291,9 @@ def execute_selected_contract(
             dependency=actor.dependency,
             confirmation=payload.confirmation,
             execution_id=payload.execution_id,
+            mode=payload.mode,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
         )
     except BatchNotFoundError as error:
         raise HTTPException(
@@ -326,6 +341,7 @@ def execute_selected_contract(
     except (
         BatchRepositoryError,
         ExecutionRepositoryError,
+        ExecutionEvidenceRepositoryError,
     ) as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -346,15 +362,17 @@ def get_selected_contract_execution(
     item_id: UUID,
     actor: Superuser,
     service: Annotated[
-        BatchContractExecutionService,
+        ControlledBatchContractExecutionService,
         Depends(get_batch_contract_execution_service),
     ],
+    mode: ExecutionMode = Query(default=ExecutionMode.DRY_RUN),
 ) -> BatchContractExecutionResponse:
     try:
         result = service.status(
             batch_id=batch_id,
             item_id=item_id,
             dependency=actor.dependency,
+            mode=mode,
         )
     except BatchNotFoundError as error:
         raise HTTPException(
@@ -369,6 +387,7 @@ def get_selected_contract_execution(
     except (
         BatchRepositoryError,
         ExecutionRepositoryError,
+        ExecutionEvidenceRepositoryError,
     ) as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -378,6 +397,46 @@ def get_selected_contract_execution(
         ) from error
 
     return BatchContractExecutionResponse.from_domain(result)
+
+
+@router.get(
+    "/{batch_id}/contracts/{item_id}/execution/evidence/{correlation_id}",
+    response_model=ContractExecutionEvidenceResponse,
+)
+def get_selected_contract_execution_evidence(
+    batch_id: UUID,
+    item_id: UUID,
+    correlation_id: UUID,
+    actor: Superuser,
+    service: Annotated[
+        ControlledBatchContractExecutionService,
+        Depends(get_batch_contract_execution_service),
+    ],
+) -> ContractExecutionEvidenceResponse:
+    try:
+        evidence = service.get_evidence(
+            batch_id=batch_id,
+            item_id=item_id,
+            correlation_id=correlation_id,
+            dependency=actor.dependency,
+        )
+    except ExecutionEvidenceNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except ExecutionEvidenceContextError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        ) from error
+    except ExecutionEvidenceRepositoryError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No fue posible consultar las evidencias de ejecución.",
+        ) from error
+
+    return ContractExecutionEvidenceResponse.from_domain(evidence)
 
 
 @router.post(

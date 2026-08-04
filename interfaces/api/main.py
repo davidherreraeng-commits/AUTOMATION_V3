@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,10 @@ from adapters.persistence.sqlite.portal_credential_repository import (
     SQLitePortalCredentialRepository,
 )
 from adapters.persistence.sqlite.user_repository import SQLiteUserRepository
+from adapters.persistence.json_execution_evidence_repository import (
+    JsonExecutionEvidenceRepository,
+)
+from adapters.dry_run_contract_executor import DryRunContractExecutor
 from application.ports.batch_execution_runner import BatchExecutionRunner
 from application.ports.batch_portal_probe import BatchPortalProbe
 from application.ports.contract_executor import ContractExecutor
@@ -23,6 +28,9 @@ from application.ports.portal_credential_verifier import (
 )
 from application.services.batch_contract_execution_service import (
     BatchContractExecutionService,
+)
+from application.services.controlled_batch_contract_execution_service import (
+    ControlledBatchContractExecutionService,
 )
 from application.services.batch_execution_service import BatchExecutionService
 from application.use_cases.execute_contract_in_session import (
@@ -156,15 +164,22 @@ def create_app(
                 checkpoints=checkpoints,
             )
 
-        app.state.batch_contract_execution_service = (
+        real_write_enabled = (
+            resolved_settings.batch_execution_enabled
+            and os.getenv(
+                "RPA_REAL_WRITE_AUTHORIZATION",
+                "",
+            ).strip().upper()
+            == "INSTITUTIONALLY_AUTHORIZED"
+        )
+
+        real_contract_execution_service = (
             BatchContractExecutionService(
                 batches=batches,
                 credentials=portal_credentials,
                 checkpoints=checkpoints,
                 executor=resolved_contract_executor,
-                execution_enabled=(
-                    resolved_settings.batch_execution_enabled
-                ),
+                execution_enabled=real_write_enabled,
                 credential_max_age_hours=(
                     resolved_settings
                     .batch_execution_credential_max_age_hours
@@ -173,6 +188,24 @@ def create_app(
                     resolved_settings
                     .batch_execution_reject_unit_test_values
                 ),
+            )
+        )
+
+        execution_evidence_repository = JsonExecutionEvidenceRepository(
+            resolved_settings.resolved_database_path.parent
+            / "execution_evidence"
+        )
+        execution_evidence_repository.initialize()
+        app.state.execution_evidence_repository = (
+            execution_evidence_repository
+        )
+        app.state.real_write_enabled = real_write_enabled
+        app.state.batch_contract_execution_service = (
+            ControlledBatchContractExecutionService(
+                real_service=real_contract_execution_service,
+                dry_run_executor=DryRunContractExecutor(),
+                evidence=execution_evidence_repository,
+                real_write_enabled=real_write_enabled,
             )
         )
 

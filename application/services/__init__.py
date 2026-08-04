@@ -1,3 +1,6 @@
+from application.services.controlled_batch_contract_execution_service import (
+    ControlledBatchContractExecutionService,
+)
 from application.services.batch_contract_execution_service import (
     BatchContractExecutionService,
 )
@@ -16,6 +19,7 @@ from application.services.user_management_service import UserManagementService
 
 __all__ = [
     "BatchContractExecutionService",
+    "ControlledBatchContractExecutionService",
     "BatchExecutionService",
     "BatchCreationService",
     "AuthenticationService",

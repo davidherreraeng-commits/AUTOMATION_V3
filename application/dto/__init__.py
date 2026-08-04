@@ -26,6 +26,10 @@ from application.dto.batch_validation import (
     BatchValidationResult,
 )
 from application.dto.execution_checkpoint import ExecutionResumeState
+from application.dto.execution_evidence import (
+    ContractExecutionEvidence,
+    ExecutionEvidenceEvent,
+)
 from application.dto.file_validation import FileValidationOutcome
 from application.dto.import_result import ContractImportResult, ImportIssue
 from application.dto.step_execution import (
@@ -54,6 +58,8 @@ __all__ = [
     "BatchValidationResult",
     "ContractImportResult",
     "ExecutionResumeState",
+    "ContractExecutionEvidence",
+    "ExecutionEvidenceEvent",
     "FileValidationOutcome",
     "ImportIssue",
     "PortalStepVerification",

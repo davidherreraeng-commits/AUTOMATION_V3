@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
@@ -213,9 +213,82 @@ def save_and_test_credentials(client: TestClient) -> None:
     assert tested.json()["success"] is True
 
 
-def test_superuser_should_execute_one_selected_contract(
+def endpoint_for(batch: dict) -> tuple[dict, str]:
+    item = batch["contracts"][0]
+    endpoint = (
+        f"/api/v1/batches/{batch['batch_id']}/contracts/"
+        f"{item['item_id']}/execution"
+    )
+    return item, endpoint
+
+
+def test_default_mode_should_simulate_and_publish_evidence(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.delenv("RPA_REAL_WRITE_AUTHORIZATION", raising=False)
+    executor = FakeContractExecutor()
+    app = create_app(
+        settings(tmp_path),
+        portal_credential_verifier=FakeVerifier(),
+        contract_executor=executor,
+    )
+
+    with TestClient(app) as client:
+        executor.repository = app.state.execution_repository
+        create_account(app, username="jefe", role=UserRole.SUPERUSER)
+        login(client, "jefe")
+        batch = create_batch(client)
+        item, endpoint = endpoint_for(batch)
+
+        preflight = client.get(f"{endpoint}/preflight")
+        assert preflight.status_code == 200
+        preflight_payload = preflight.json()
+        assert preflight_payload["mode"] == "DRY_RUN"
+        assert preflight_payload["writes_to_portal"] is False
+        assert preflight_payload["real_write_enabled"] is False
+        assert preflight_payload["can_execute"] is True
+        required = preflight_payload["required_confirmation"]
+        assert required == "SIMULAR CONTRATO 70-2026"
+
+        executed = client.post(
+            endpoint,
+            json={"confirmation": required},
+        )
+        assert executed.status_code == 200
+        payload = executed.json()
+        assert payload["mode"] == "DRY_RUN"
+        assert payload["writes_to_portal"] is False
+        assert payload["success"] is True
+        assert payload["item_status"] == "PENDING"
+        assert payload["batch_status"] == "READY"
+        assert payload["execution_status"] == "COMPLETED"
+        assert payload["evidence_count"] == 11
+        assert payload["correlation_id"]
+        assert executor.calls == []
+
+        evidence = client.get(
+            f"{endpoint}/evidence/{payload['correlation_id']}"
+        )
+        assert evidence.status_code == 200
+        evidence_payload = evidence.json()
+        assert evidence_payload["mode"] == "DRY_RUN"
+        assert evidence_payload["actor_username"] == "jefe"
+        assert evidence_payload["evidence_count"] == 11
+        assert evidence_payload["events"][-1]["step"] == "COMPLETED"
+
+        status_response = client.get(endpoint)
+        assert status_response.status_code == 200
+        status_payload = status_response.json()
+        assert status_payload["correlation_id"] == payload["correlation_id"]
+        assert status_payload["writes_to_portal"] is False
+
+
+def test_real_mode_should_require_institutional_server_authorization(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("RPA_REAL_WRITE_AUTHORIZATION", raising=False)
     executor = FakeContractExecutor()
     app = create_app(
         settings(tmp_path),
@@ -229,51 +302,93 @@ def test_superuser_should_execute_one_selected_contract(
         login(client, "jefe")
         save_and_test_credentials(client)
         batch = create_batch(client)
-        item = batch["contracts"][0]
-        endpoint = (
-            f"/api/v1/batches/{batch['batch_id']}/contracts/"
-            f"{item['item_id']}/execution"
-        )
+        _, endpoint = endpoint_for(batch)
 
-        preflight = client.get(f"{endpoint}/preflight")
+        preflight = client.get(
+            f"{endpoint}/preflight",
+            params={"mode": "REAL"},
+        )
+        assert preflight.status_code == 200
+        assert preflight.json()["can_execute"] is False
+        assert preflight.json()["real_write_enabled"] is False
+        assert "EXECUTION_DISABLED" in {
+            issue["code"] for issue in preflight.json()["issues"]
+        }
+
+        blocked = client.post(
+            endpoint,
+            json={
+                "mode": "REAL",
+                "confirmation": "EJECUTAR CONTRATO 70-2026",
+            },
+        )
+        assert blocked.status_code == 409
+        assert executor.calls == []
+
+
+def test_authorized_real_mode_should_execute_selected_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "RPA_REAL_WRITE_AUTHORIZATION",
+        "INSTITUTIONALLY_AUTHORIZED",
+    )
+    executor = FakeContractExecutor()
+    app = create_app(
+        settings(tmp_path),
+        portal_credential_verifier=FakeVerifier(),
+        contract_executor=executor,
+    )
+
+    with TestClient(app) as client:
+        executor.repository = app.state.execution_repository
+        create_account(app, username="jefe", role=UserRole.SUPERUSER)
+        login(client, "jefe")
+        save_and_test_credentials(client)
+        batch = create_batch(client)
+        _, endpoint = endpoint_for(batch)
+
+        preflight = client.get(
+            f"{endpoint}/preflight",
+            params={"mode": "REAL"},
+        )
         assert preflight.status_code == 200
         assert preflight.json()["can_execute"] is True
+        assert preflight.json()["real_write_enabled"] is True
         required = preflight.json()["required_confirmation"]
         assert required == "EJECUTAR CONTRATO 70-2026"
 
-        rejected = client.post(
-            endpoint,
-            json={"confirmation": "ACEPTO"},
-        )
-        assert rejected.status_code == 409
-        assert rejected.json()["detail"]["code"] == (
-            "WRITE_CONFIRMATION_REQUIRED"
-        )
-        assert executor.calls == []
-
         executed = client.post(
             endpoint,
-            json={"confirmation": required},
+            json={
+                "mode": "REAL",
+                "confirmation": required,
+            },
         )
         assert executed.status_code == 200
         payload = executed.json()
+        assert payload["mode"] == "REAL"
+        assert payload["writes_to_portal"] is True
         assert payload["success"] is True
         assert payload["item_status"] == "COMPLETED"
         assert payload["batch_status"] == "COMPLETED"
-        assert payload["execution_status"] == "COMPLETED"
-        assert payload["last_completed_step"] == "COMPLETED"
+        assert payload["correlation_id"]
         assert executor.calls == [("70-2026", None)]
 
-        status_response = client.get(endpoint)
-        assert status_response.status_code == 200
-        status_payload = status_response.json()
-        assert status_payload["execution_id"] == payload["execution_id"]
-        assert status_payload["success"] is True
+        evidence = client.get(
+            f"{endpoint}/evidence/{payload['correlation_id']}"
+        )
+        assert evidence.status_code == 200
+        assert evidence.json()["mode"] == "REAL"
+        assert evidence.json()["actor_username"] == "jefe"
 
 
-def test_operator_should_not_access_selected_contract_execution(
+def test_operator_should_not_access_controlled_contract_execution(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.delenv("RPA_REAL_WRITE_AUTHORIZATION", raising=False)
     executor = FakeContractExecutor()
     app = create_app(
         settings(tmp_path),
@@ -286,15 +401,14 @@ def test_operator_should_not_access_selected_contract_execution(
         create_account(app, username="operador", role=UserRole.OPERATOR)
         login(client, "operador")
         batch = create_batch(client)
-        item = batch["contracts"][0]
-        endpoint = (
-            f"/api/v1/batches/{batch['batch_id']}/contracts/"
-            f"{item['item_id']}/execution"
-        )
+        _, endpoint = endpoint_for(batch)
 
         assert client.get(f"{endpoint}/preflight").status_code == 403
         assert client.get(endpoint).status_code == 403
         assert client.post(
             endpoint,
-            json={"confirmation": "EJECUTAR CONTRATO 70-2026"},
+            json={"confirmation": "SIMULAR CONTRATO 70-2026"},
+        ).status_code == 403
+        assert client.get(
+            f"{endpoint}/evidence/{uuid4()}"
         ).status_code == 403

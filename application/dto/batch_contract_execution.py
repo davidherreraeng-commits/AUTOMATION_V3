@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from domain.enums import ContractStep, ExecutionStatus
+from domain.enums import ContractStep, ExecutionMode, ExecutionStatus
 from domain.enums.batch_status import BatchContractStatus, BatchStatus
 from domain.models import ContractExecution
 from domain.models.contract_batch import BatchContract, ContractBatch
+from application.dto.step_execution import StepExecutionResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,10 @@ class BatchContractExecutionPreflight:
     resumable: bool
     checked_at: datetime
     issues: tuple[BatchContractExecutionIssue, ...]
+    mode: ExecutionMode = ExecutionMode.REAL
+    real_write_enabled: bool = False
+    simulation_available: bool = False
+    latest_correlation_id: UUID | None = None
 
     @property
     def can_execute(self) -> bool:
@@ -63,6 +68,11 @@ class BatchContractExecutionResult:
     operational_message: str
     error_code: str | None = None
     technical_detail: str | None = None
+    mode: ExecutionMode = ExecutionMode.REAL
+    correlation_id: UUID | None = None
+    writes_to_portal: bool = True
+    evidence_count: int = 0
+    transitions: tuple[StepExecutionResult, ...] = ()
 
     @property
     def batch_status(self) -> BatchStatus:

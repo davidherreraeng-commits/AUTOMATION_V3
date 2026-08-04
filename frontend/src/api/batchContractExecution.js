@@ -15,16 +15,26 @@ export {
 
 const CONTRACT_EXECUTION_TIMEOUT_MS = 30 * 60 * 1000;
 
-export async function getContractExecutionPreflight(batchId, itemId) {
+export async function getContractExecutionPreflight(
+  batchId,
+  itemId,
+  mode = "DRY_RUN",
+) {
   const response = await api.get(
     `/batches/${batchId}/contracts/${itemId}/execution/preflight`,
+    { params: { mode } },
   );
   return response.data;
 }
 
-export async function getContractExecutionStatus(batchId, itemId) {
+export async function getContractExecutionStatus(
+  batchId,
+  itemId,
+  mode = "DRY_RUN",
+) {
   const response = await api.get(
     `/batches/${batchId}/contracts/${itemId}/execution`,
+    { params: { mode } },
   );
   return response.data;
 }
@@ -34,16 +44,29 @@ export async function executeSelectedContract({
   itemId,
   confirmation,
   executionId = null,
+  mode = "DRY_RUN",
 }) {
   const response = await api.post(
     `/batches/${batchId}/contracts/${itemId}/execution`,
     {
       confirmation,
       execution_id: executionId,
+      mode,
     },
     {
       timeout: CONTRACT_EXECUTION_TIMEOUT_MS,
     },
+  );
+  return response.data;
+}
+
+export async function getContractExecutionEvidence({
+  batchId,
+  itemId,
+  correlationId,
+}) {
+  const response = await api.get(
+    `/batches/${batchId}/contracts/${itemId}/execution/evidence/${correlationId}`,
   );
   return response.data;
 }

@@ -59,18 +59,45 @@ test("actualiza únicamente el contrato ejecutado dentro del lote", () => {
   assert.notEqual(updated, batch);
 });
 
-test("muestra Reanudar cuando existe checkpoint recuperable", () => {
+test("diferencia simulación, ejecución y reanudación", () => {
   assert.equal(
-    contractActionLabel({ can_execute: true, resumable: true }),
+    contractActionLabel({ can_execute: true, resumable: false }, "DRY_RUN"),
+    "Simular",
+  );
+  assert.equal(
+    contractActionLabel({ can_execute: true, resumable: true }, "REAL"),
     "Reanudar",
   );
   assert.equal(
-    contractActionLabel({ can_execute: true, resumable: false }),
+    contractActionLabel({ can_execute: true, resumable: false }, "REAL"),
     "Ejecutar",
   );
   assert.equal(
-    contractActionLabel({ can_execute: false, resumable: false }),
+    contractActionLabel({ can_execute: false, resumable: false }, "DRY_RUN"),
     "Revisar bloqueos",
   );
-  assert.equal(contractActionLabel(null), "Comprobar");
+  assert.equal(contractActionLabel(null, "DRY_RUN"), "Comprobar simulación");
+});
+
+test("la simulación no cambia el estado operativo del lote", () => {
+  const batch = {
+    batch_id: "batch-1",
+    status: "READY",
+    contracts: [
+      { item_id: "item-1", status: "PENDING", last_message: null },
+    ],
+  };
+
+  const updated = applyContractExecutionToBatch(batch, {
+    mode: "DRY_RUN",
+    writes_to_portal: false,
+    item_id: "item-1",
+    batch_status: "COMPLETED",
+    item_status: "COMPLETED",
+    operational_message: "Simulación completada.",
+  });
+
+  assert.equal(updated, batch);
+  assert.equal(updated.status, "READY");
+  assert.equal(updated.contracts[0].status, "PENDING");
 });

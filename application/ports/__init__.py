@@ -26,6 +26,10 @@ from application.ports.contract_portal_session import (
     OpenedContractPortalSession,
 )
 from application.ports.contract_source import ContractSource
+from application.ports.execution_evidence_repository import (
+    ExecutionEvidenceRepository,
+    ExecutionEvidenceRepositoryError,
+)
 from application.ports.execution_repository import (
     ExecutionIdentityConflictError,
     ExecutionRepository,
@@ -52,6 +56,8 @@ __all__ = [
     "ContractPortalSessionFactory",
     "OpenedContractPortalSession",
     "ContractSource",
+    "ExecutionEvidenceRepository",
+    "ExecutionEvidenceRepositoryError",
     "ExecutionIdentityConflictError",
     "ExecutionRepository",
     "ExecutionRepositoryError",

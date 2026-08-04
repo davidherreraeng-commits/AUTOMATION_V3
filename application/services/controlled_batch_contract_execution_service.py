@@ -1,0 +1,594 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import UTC, datetime
+from threading import Lock
+from uuid import UUID, uuid4
+
+from application.dto.batch_contract_execution import (
+    BatchContractExecutionIssue,
+    BatchContractExecutionPreflight,
+    BatchContractExecutionResult,
+)
+from application.dto.execution_evidence import (
+    ContractExecutionEvidence,
+    ExecutionEvidenceEvent,
+)
+from application.ports.contract_executor import ContractExecutor
+from application.ports.execution_evidence_repository import (
+    ExecutionEvidenceRepository,
+)
+from application.services.batch_contract_execution_service import (
+    BatchContractExecutionService,
+)
+from application.use_cases.process_contract import ContractProcessingResult
+from domain.enums import ContractStep, ExecutionMode, ExecutionStatus
+from domain.errors.batch_contract_execution_errors import (
+    BatchContractExecutionBlockedError,
+    BatchContractExecutionConfirmationError,
+    BatchContractExecutionInProgressError,
+)
+from domain.errors.execution_evidence_errors import (
+    ExecutionEvidenceContextError,
+    ExecutionEvidenceNotFoundError,
+)
+from domain.models import ContractExecution
+
+
+class ControlledBatchContractExecutionService:
+    """Añade simulación, autorización real y auditoría al servicio 6C14C."""
+
+    DRY_RUN_IGNORED_ISSUES = frozenset(
+        {
+            "EXECUTION_DISABLED",
+            "CONTRACT_EXECUTOR_UNAVAILABLE",
+            "CREDENTIALS_NOT_CONFIGURED",
+            "CREDENTIALS_NOT_VERIFIED",
+            "CREDENTIALS_TEST_DATE_MISSING",
+            "CREDENTIALS_TEST_EXPIRED",
+            "ITEM_ACTIVE_IN_PROCESS",
+            "BROWSER_SESSION_BUSY",
+            "ANOTHER_ITEM_PROCESSING",
+            "EXECUTION_TERMINAL",
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        real_service: BatchContractExecutionService,
+        dry_run_executor: ContractExecutor,
+        evidence: ExecutionEvidenceRepository,
+        real_write_enabled: bool,
+    ) -> None:
+        self._real = real_service
+        self._dry_run = dry_run_executor
+        self._evidence = evidence
+        self._real_write_enabled = bool(real_write_enabled)
+        self._simulation_lock = Lock()
+        self._active_simulations: set[tuple[UUID, UUID]] = set()
+
+    def preflight(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        dependency: str,
+        mode: ExecutionMode = ExecutionMode.DRY_RUN,
+    ) -> BatchContractExecutionPreflight:
+        selected_mode = ExecutionMode(mode)
+        base = self._real.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=dependency,
+        )
+        latest = self._evidence.get_latest(
+            batch_id=batch_id,
+            item_id=item_id,
+            mode=selected_mode,
+        )
+
+        if selected_mode is ExecutionMode.REAL:
+            return replace(
+                base,
+                mode=selected_mode,
+                real_write_enabled=self._real_write_enabled,
+                simulation_available=True,
+                latest_correlation_id=(
+                    latest.correlation_id if latest is not None else None
+                ),
+            )
+
+        issues: list[BatchContractExecutionIssue] = []
+        for issue in base.issues:
+            if issue.code in self.DRY_RUN_IGNORED_ISSUES:
+                continue
+            if issue.code == "TEST_VALUES_DETECTED":
+                issues.append(
+                    BatchContractExecutionIssue(
+                        code=issue.code,
+                        message=(
+                            "Se detectaron valores unitarios de prueba. "
+                            "La simulación puede continuar porque no escribe "
+                            "en Gestión Transparente."
+                        ),
+                        blocking=False,
+                    )
+                )
+                continue
+            issues.append(issue)
+
+        key = (batch_id, item_id)
+        with self._simulation_lock:
+            simulation_active = key in self._active_simulations
+        if simulation_active:
+            issues.append(
+                BatchContractExecutionIssue(
+                    code="DRY_RUN_IN_PROGRESS",
+                    message="Este contrato ya tiene una simulación activa.",
+                )
+            )
+
+        return replace(
+            base,
+            required_confirmation=self.required_confirmation(
+                base.item.contract.contract_number,
+                selected_mode,
+            ),
+            execution_enabled=True,
+            executor_available=True,
+            active_in_process=simulation_active,
+            execution=None,
+            resumable=False,
+            issues=tuple(issues),
+            mode=selected_mode,
+            real_write_enabled=self._real_write_enabled,
+            simulation_available=True,
+            latest_correlation_id=(
+                latest.correlation_id if latest is not None else None
+            ),
+        )
+
+    def execute(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        dependency: str,
+        confirmation: str,
+        actor_username: str,
+        actor_user_id: int | None,
+        mode: ExecutionMode = ExecutionMode.DRY_RUN,
+        execution_id: UUID | None = None,
+    ) -> BatchContractExecutionResult:
+        selected_mode = ExecutionMode(mode)
+        preflight = self.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=dependency,
+            mode=selected_mode,
+        )
+        blocking = tuple(
+            (issue.code, issue.message)
+            for issue in preflight.issues
+            if issue.blocking
+        )
+        if blocking:
+            raise BatchContractExecutionBlockedError(blocking)
+
+        required = preflight.required_confirmation
+        if self._confirmation_identity(confirmation) != (
+            self._confirmation_identity(required)
+        ):
+            raise BatchContractExecutionConfirmationError(required)
+
+        correlation_id = uuid4()
+        started_at = datetime.now(UTC)
+
+        if selected_mode is ExecutionMode.DRY_RUN:
+            return self._execute_dry_run(
+                preflight=preflight,
+                correlation_id=correlation_id,
+                started_at=started_at,
+                actor_username=actor_username,
+                actor_user_id=actor_user_id,
+            )
+
+        try:
+            result = self._real.execute(
+                batch_id=batch_id,
+                item_id=item_id,
+                dependency=dependency,
+                confirmation=confirmation,
+                execution_id=execution_id,
+            )
+        except Exception as error:
+            self._save_failure(
+                preflight=preflight,
+                correlation_id=correlation_id,
+                started_at=started_at,
+                actor_username=actor_username,
+                actor_user_id=actor_user_id,
+                error=error,
+            )
+            raise
+
+        evidence = self._evidence_from_result(
+            result=result,
+            preflight=preflight,
+            correlation_id=correlation_id,
+            started_at=started_at,
+            actor_username=actor_username,
+            actor_user_id=actor_user_id,
+        )
+        self._evidence.save(evidence)
+        return replace(
+            result,
+            mode=selected_mode,
+            correlation_id=correlation_id,
+            writes_to_portal=True,
+            evidence_count=evidence.evidence_count,
+        )
+
+    def status(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        dependency: str,
+        mode: ExecutionMode = ExecutionMode.DRY_RUN,
+    ) -> BatchContractExecutionResult:
+        selected_mode = ExecutionMode(mode)
+        if selected_mode is ExecutionMode.REAL:
+            result = self._real.status(
+                batch_id=batch_id,
+                item_id=item_id,
+                dependency=dependency,
+            )
+            latest = self._evidence.get_latest(
+                batch_id=batch_id,
+                item_id=item_id,
+                mode=selected_mode,
+            )
+            return replace(
+                result,
+                mode=selected_mode,
+                correlation_id=(
+                    latest.correlation_id if latest is not None else None
+                ),
+                writes_to_portal=True,
+                evidence_count=(
+                    latest.evidence_count if latest is not None else 0
+                ),
+            )
+
+        preflight = self.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=dependency,
+            mode=selected_mode,
+        )
+        latest = self._evidence.get_latest(
+            batch_id=batch_id,
+            item_id=item_id,
+            mode=selected_mode,
+        )
+        if latest is None:
+            return BatchContractExecutionResult(
+                batch=preflight.batch,
+                item=preflight.item,
+                required_confirmation=preflight.required_confirmation,
+                active_in_process=preflight.active_in_process,
+                execution=None,
+                transition_count=0,
+                success=False,
+                resumable=False,
+                retry_pending=False,
+                requires_manual_review=False,
+                operational_message=(
+                    "El contrato todavía no tiene una simulación registrada."
+                ),
+                mode=selected_mode,
+                correlation_id=None,
+                writes_to_portal=False,
+                evidence_count=0,
+            )
+
+        execution = self._execution_from_evidence(latest)
+        return BatchContractExecutionResult(
+            batch=preflight.batch,
+            item=preflight.item,
+            required_confirmation=preflight.required_confirmation,
+            active_in_process=preflight.active_in_process,
+            execution=execution,
+            transition_count=latest.evidence_count,
+            success=latest.success,
+            resumable=False,
+            retry_pending=False,
+            requires_manual_review=False,
+            operational_message=latest.operational_message,
+            error_code=latest.error_code,
+            technical_detail=latest.technical_detail,
+            mode=selected_mode,
+            correlation_id=latest.correlation_id,
+            writes_to_portal=False,
+            evidence_count=latest.evidence_count,
+        )
+
+    def get_evidence(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        correlation_id: UUID,
+        dependency: str,
+    ) -> ContractExecutionEvidence:
+        evidence = self._evidence.get(correlation_id)
+        if evidence is None:
+            raise ExecutionEvidenceNotFoundError(correlation_id)
+        if (
+            evidence.batch_id != batch_id
+            or evidence.item_id != item_id
+            or self._dependency_identity(evidence.dependency)
+            != self._dependency_identity(dependency)
+        ):
+            raise ExecutionEvidenceContextError(
+                "La evidencia no pertenece al contrato solicitado."
+            )
+        return evidence
+
+    def list_evidence(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        dependency: str,
+    ) -> tuple[ContractExecutionEvidence, ...]:
+        preflight = self.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=dependency,
+            mode=ExecutionMode.DRY_RUN,
+        )
+        _ = preflight
+        return self._evidence.list_for_item(
+            batch_id=batch_id,
+            item_id=item_id,
+        )
+
+    def _execute_dry_run(
+        self,
+        *,
+        preflight: BatchContractExecutionPreflight,
+        correlation_id: UUID,
+        started_at: datetime,
+        actor_username: str,
+        actor_user_id: int | None,
+    ) -> BatchContractExecutionResult:
+        key = (preflight.batch.batch_id, preflight.item.item_id)
+        with self._simulation_lock:
+            if self._active_simulations:
+                active_batch, active_item = next(iter(self._active_simulations))
+                raise BatchContractExecutionInProgressError(
+                    batch_id=active_batch,
+                    item_id=active_item,
+                )
+            self._active_simulations.add(key)
+
+        try:
+            processing = self._dry_run.execute(
+                contract=preflight.item.contract,
+                execution_id=correlation_id,
+            )
+            result = BatchContractExecutionResult(
+                batch=preflight.batch,
+                item=preflight.item,
+                required_confirmation=preflight.required_confirmation,
+                active_in_process=False,
+                execution=processing.execution,
+                transition_count=len(processing.transitions),
+                success=True,
+                resumable=False,
+                retry_pending=False,
+                requires_manual_review=False,
+                operational_message=(
+                    "Simulación completada. No se abrió Chrome ni se "
+                    "escribieron datos en Gestión Transparente."
+                ),
+                mode=ExecutionMode.DRY_RUN,
+                correlation_id=correlation_id,
+                writes_to_portal=False,
+                transitions=processing.transitions,
+            )
+            evidence = self._evidence_from_result(
+                result=result,
+                preflight=preflight,
+                correlation_id=correlation_id,
+                started_at=started_at,
+                actor_username=actor_username,
+                actor_user_id=actor_user_id,
+            )
+            self._evidence.save(evidence)
+            return replace(result, evidence_count=evidence.evidence_count)
+        except Exception as error:
+            self._save_failure(
+                preflight=preflight,
+                correlation_id=correlation_id,
+                started_at=started_at,
+                actor_username=actor_username,
+                actor_user_id=actor_user_id,
+                error=error,
+            )
+            raise
+        finally:
+            with self._simulation_lock:
+                self._active_simulations.discard(key)
+
+    def _evidence_from_result(
+        self,
+        *,
+        result: BatchContractExecutionResult,
+        preflight: BatchContractExecutionPreflight,
+        correlation_id: UUID,
+        started_at: datetime,
+        actor_username: str,
+        actor_user_id: int | None,
+    ) -> ContractExecutionEvidence:
+        events = tuple(
+            ExecutionEvidenceEvent(
+                sequence=index,
+                step=transition.step,
+                outcome=transition.outcome.value,
+                message=transition.message,
+                recorded_at=transition.execution.updated_at,
+                metadata={
+                    "execution_status": transition.execution.status.value,
+                    "mode": result.mode.value,
+                },
+            )
+            for index, transition in enumerate(result.transitions, start=1)
+        )
+        if not events:
+            events = (
+                ExecutionEvidenceEvent(
+                    sequence=1,
+                    step=result.last_completed_step,
+                    outcome=(
+                        "COMPLETED" if result.success else "STOPPED"
+                    ),
+                    message=result.operational_message,
+                    recorded_at=datetime.now(UTC),
+                    metadata={
+                        "execution_status": (
+                            result.execution_status.value
+                            if result.execution_status is not None
+                            else None
+                        ),
+                        "transition_count": result.transition_count,
+                        "mode": result.mode.value,
+                    },
+                ),
+            )
+
+        return ContractExecutionEvidence(
+            correlation_id=correlation_id,
+            mode=result.mode,
+            batch_id=preflight.batch.batch_id,
+            item_id=preflight.item.item_id,
+            contract_number=preflight.item.contract.contract_number,
+            dependency=preflight.batch.dependency,
+            actor_username=actor_username,
+            actor_user_id=actor_user_id,
+            status=(
+                result.execution_status.value
+                if result.execution_status is not None
+                else ("COMPLETED" if result.success else "STOPPED")
+            ),
+            success=result.success,
+            started_at=started_at,
+            completed_at=datetime.now(UTC),
+            required_confirmation=preflight.required_confirmation,
+            operational_message=result.operational_message,
+            execution_id=result.execution_id,
+            execution_status=result.execution_status,
+            last_completed_step=result.last_completed_step,
+            current_step=result.current_step,
+            last_failed_step=result.last_failed_step,
+            attempt_count=result.attempt_count,
+            error_code=result.error_code,
+            technical_detail=result.technical_detail,
+            events=events,
+        )
+
+    def _save_failure(
+        self,
+        *,
+        preflight: BatchContractExecutionPreflight,
+        correlation_id: UUID,
+        started_at: datetime,
+        actor_username: str,
+        actor_user_id: int | None,
+        error: Exception,
+    ) -> None:
+        completed_at = datetime.now(UTC)
+        record = ContractExecutionEvidence(
+            correlation_id=correlation_id,
+            mode=preflight.mode,
+            batch_id=preflight.batch.batch_id,
+            item_id=preflight.item.item_id,
+            contract_number=preflight.item.contract.contract_number,
+            dependency=preflight.batch.dependency,
+            actor_username=actor_username,
+            actor_user_id=actor_user_id,
+            status="FAILED",
+            success=False,
+            started_at=started_at,
+            completed_at=completed_at,
+            required_confirmation=preflight.required_confirmation,
+            operational_message=(
+                "La ejecución controlada se detuvo antes de completarse."
+            ),
+            error_code=str(getattr(error, "code", type(error).__name__)),
+            technical_detail=f"{type(error).__name__}: {error}",
+            events=(
+                ExecutionEvidenceEvent(
+                    sequence=1,
+                    step=None,
+                    outcome="FAILED",
+                    message=str(error),
+                    recorded_at=completed_at,
+                    metadata={
+                        "exception_type": type(error).__name__,
+                        "mode": preflight.mode.value,
+                    },
+                ),
+            ),
+        )
+        self._evidence.save(record)
+
+    @staticmethod
+    def _execution_from_evidence(
+        evidence: ContractExecutionEvidence,
+    ) -> ContractExecution:
+        return ContractExecution(
+            execution_id=evidence.execution_id or evidence.correlation_id,
+            contract_number=evidence.contract_number,
+            dependency=evidence.dependency,
+            status=evidence.execution_status or (
+                ExecutionStatus.COMPLETED
+                if evidence.success
+                else ExecutionStatus.FAILED
+            ),
+            last_completed_step=(
+                evidence.last_completed_step or ContractStep.PENDING
+            ),
+            current_step=evidence.current_step,
+            last_failed_step=evidence.last_failed_step,
+            attempt_count=evidence.attempt_count,
+            portal_profile=evidence.mode.value,
+            last_error=None,
+            created_at=evidence.started_at,
+            started_at=evidence.started_at,
+            updated_at=evidence.completed_at,
+            completed_at=evidence.completed_at,
+        )
+
+    @staticmethod
+    def required_confirmation(
+        contract_number: str,
+        mode: ExecutionMode,
+    ) -> str:
+        prefix = (
+            "SIMULAR CONTRATO"
+            if mode is ExecutionMode.DRY_RUN
+            else "EJECUTAR CONTRATO"
+        )
+        return f"{prefix} {str(contract_number).strip()}"
+
+    @staticmethod
+    def _confirmation_identity(value: object) -> str:
+        return " ".join(str(value).split()).casefold()
+
+    @staticmethod
+    def _dependency_identity(value: object) -> str:
+        return " ".join(str(value).split()).casefold()

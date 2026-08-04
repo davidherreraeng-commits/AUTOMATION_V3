@@ -17,8 +17,8 @@ from application.ports.portal_credential_verifier import (
     PortalCredentialVerifier,
 )
 from application.services.authentication_service import AuthenticationService
-from application.services.batch_contract_execution_service import (
-    BatchContractExecutionService,
+from application.services.controlled_batch_contract_execution_service import (
+    ControlledBatchContractExecutionService,
 )
 from application.services.batch_execution_service import BatchExecutionService
 from application.services.batch_creation_service import BatchCreationService
@@ -76,7 +76,7 @@ def get_batch_execution_service(request: Request) -> BatchExecutionService:
 
 def get_batch_contract_execution_service(
     request: Request,
-) -> BatchContractExecutionService:
+) -> ControlledBatchContractExecutionService:
     return request.app.state.batch_contract_execution_service
 
 

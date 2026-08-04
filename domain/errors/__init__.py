@@ -1,3 +1,7 @@
+from domain.errors.execution_evidence_errors import (
+    ExecutionEvidenceContextError,
+    ExecutionEvidenceNotFoundError,
+)
 from domain.errors.batch_contract_execution_errors import (
     BatchContractExecutionBlockedError,
     BatchContractExecutionConfirmationError,
@@ -50,6 +54,8 @@ from domain.errors.portal_errors import (
 )
 
 __all__ = [
+    "ExecutionEvidenceContextError",
+    "ExecutionEvidenceNotFoundError",
     "BatchContractExecutionBlockedError",
     "BatchContractExecutionConfirmationError",
     "BatchContractExecutionError",

@@ -440,6 +440,7 @@ class BatchContractExecutionService:
                 operational_message=operational_message,
                 error_code=error_code,
                 technical_detail=technical_detail,
+                transitions=processing.transitions,
             )
         finally:
             self._release(key)
