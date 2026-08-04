@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from domain.errors.batch_execution_errors import (
     BatchExecutionBlockedError,
     BatchExecutionError,
@@ -72,4 +73,36 @@ __all__ = [
     "PortalValidationError",
     "UnsafeFileNameError",
     "UnsupportedFileExtensionError",
+=======
+from domain.errors.domain_errors import (
+    CurrentStepMismatchError,
+    DomainError,
+    ExecutionStateError,
+    InvalidStepTransitionError,
+    NoPendingStepError,
+)
+from domain.errors.portal_errors import (
+    PortalAlreadyExistsError,
+    PortalAutomationError,
+    PortalEntityNotFoundError,
+    PortalSessionExpiredError,
+    PortalStructureChangedError,
+    PortalTimeoutError,
+    PortalValidationError,
+)
+
+__all__ = [
+    "CurrentStepMismatchError",
+    "DomainError",
+    "ExecutionStateError",
+    "InvalidStepTransitionError",
+    "NoPendingStepError",
+    "PortalAlreadyExistsError",
+    "PortalAutomationError",
+    "PortalEntityNotFoundError",
+    "PortalSessionExpiredError",
+    "PortalStructureChangedError",
+    "PortalTimeoutError",
+    "PortalValidationError",
+>>>>>>> a7ce04f247464ff73e13784380e29c4f979d817d
 ]

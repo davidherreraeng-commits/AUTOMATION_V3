@@ -1,0 +1,129 @@
+Plan de Acción y Desarrollo
+Contratación
+Informe Fiscal y Financiero
+Deuda Pública
+Anexos Generales
+Anexos Presupuestales
+Sujetos de Control
+Contratistas e Interventores
+Directorio
+Reportes
+Tareas
+Presupuesto
+Importación XML
+Fiducia
+Certificados
+Asistencia y Soporte
+Encuesta Ambiental
+Plantillas
+CHG
+Inicio
+>
+Contracting
+>
+
+Agregar
+
+Politecnico Colombiano Jaime Isaza Cadavid
+Contratación
+
+INFORMACIÓN GENERAL / NUEVO CONTRATO
+
+Tipo Registro
+Contrato
+Factura
+CONTRATO
+Número *
+Número *
+Identificación del Contratista
+Identificación del Contratista
+JULIANA OSPINA QUIRAMA
+Código del Proyecto
+Código del Proyecto
+INCORPORACION IDEA
+Objeto del Contrato *
+Objeto del Contrato *
+Observaciones del Contrato
+Observaciones del Contrato
+Fecha Suscripción *
+Fecha Suscripción *
+Fecha Inicio *
+Fecha Inicio *
+Valor (COP) *
+Valor (COP) *
+(Valor en Letras)
+(Valor en Letras)
+Plazo Estimado *
+Plazo Estimado *
+Años
+Dias
+Meses
+Modalidad o Proceso *
+Modalidad o Proceso *
+Procedimiento / Causal *
+Procedimiento / Causal *
+Tipo de Contrato *
+Tipo de Contrato *
+Se Pactó en Moneda Extranjera
+No
+Si
+Plan de Gobierno *
+Plan de Gobierno *
+Rubros Vinculados
+EXPORTAR EXCEL
+Buscar
+Buscar
+PLAN
+AÑO
+RUBRO
+APROPIACIÓN
+DISPONIBLE
+ACCIONES
+001 - PLAN DE DESARROLLO DEPARTAMENTAL 2024-2028
+2026
+IDEA-2026
+$8,324,709,581
+$8,178,494,085
+
+Filas por página:
+
+10
+
+1–1 de 1
+
+Se Publicó en el SECOP
+No
+Si
+URL del Contrato en el SECOP *
+URL del Contrato en el SECOP *
+Se Pactó Anticipo
+No
+Si
+Constituyó Fiducia Mercantil
+No
+Si
+Es Urgencia Manifiesta
+No
+Si
+Compromiso con Vigencia Futura
+No
+Si
+Es Convenio
+No
+Si
+Departamento de Ejecución *
+Departamento de Ejecución *
+Municipio de Ejecución *
+Municipio de Ejecución *
+GUARDAR
+VOLVER
+
+Copyright © 2026 Contraloría General de Antioquia. Todos los derechos reservados
+
+Gestión Transparente
+
+Éxito
+
+Se ha registrado el contrato exitosamente
+
+ACEPTAR
