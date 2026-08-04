@@ -29,6 +29,10 @@ from adapters.portal.gestion_transparente.selenium.diagnostics import (
     DiagnosticEvidence,
     DiagnosticsCaptureError,
 )
+from adapters.portal.gestion_transparente.selenium.contract_portal_session import (
+    ContractPortalSessionBusyError,
+    SeleniumContractPortalSessionFactory,
+)
 
 __all__ = [
     "BrowserSession",
@@ -36,10 +40,12 @@ __all__ = [
     "BrowserSessionNotStartedError",
     "BrowserSettings",
     "BrowserStartupError",
+    "ContractPortalSessionBusyError",
     "DriverFactory",
     "ElementResolver",
     "GestionTransparentePortal",
     "ResolutionCondition",
+    "SeleniumContractPortalSessionFactory",
     "SeleniumWaits",
     "WebDriverFactory",
     "BrowserDiagnostics",

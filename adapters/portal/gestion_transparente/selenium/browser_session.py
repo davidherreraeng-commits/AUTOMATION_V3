@@ -113,7 +113,13 @@ class BrowserSession:
         exception: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool:
-        self.close()
+        try:
+            self.close()
+        except BrowserSessionError:
+            # Un fallo de quit no debe ocultar la causa que interrumpió
+            # la automatización. Sin excepción previa, sí se propaga.
+            if exception is None:
+                raise
 
         # No suprime la excepción original.
         return False
