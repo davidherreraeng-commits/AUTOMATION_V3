@@ -181,10 +181,15 @@ class ExcelContractSource(ContractSource):
             values_only=True,
         )
 
-        headers = next(
-            row_iterator,
-            None,
-        )
+        try:
+            headers = next(
+                row_iterator,
+                None,
+            )
+        finally:
+            close_iterator = getattr(row_iterator, "close", None)
+            if callable(close_iterator):
+                close_iterator()
 
         if headers is None:
             raise ExcelImportError(

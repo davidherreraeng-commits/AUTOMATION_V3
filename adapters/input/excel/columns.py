@@ -190,7 +190,6 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 REQUIRED_CONTRACT_FIELDS: tuple[str, ...] = (
     ContractField.CONTRACT_NUMBER,
     ContractField.CONTRACTOR_DOCUMENT,
-    ContractField.CONTRACTOR_NATURE,
     ContractField.PROJECT_CODE,
     ContractField.OBJECT_DESCRIPTION,
     ContractField.SIGNING_DATE,
@@ -202,6 +201,9 @@ REQUIRED_CONTRACT_FIELDS: tuple[str, ...] = (
     ContractField.CONTRACT_TYPE,
     ContractField.BUDGET_ITEM,
     ContractField.BUDGET_SUBSECTOR,
+    ContractField.SECOP_URL,
     ContractField.SUPERVISOR_DOCUMENT,
     ContractField.CDP_CODE,
+    ContractField.BUDGET_REGISTER_NUMBER,
+    ContractField.GROSS_TOTAL,
 )

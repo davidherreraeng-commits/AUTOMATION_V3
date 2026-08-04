@@ -11,7 +11,6 @@ from domain.models import (
     SupervisorData,
 )
 
-from adapters.input.excel.column_mapper import normalize_header
 from adapters.input.excel.columns import ContractField
 from adapters.input.excel.errors import ValueNormalizationError
 from adapters.input.excel.value_normalizer import ValueNormalizer
@@ -27,7 +26,7 @@ class ContractRowMapper:
     Responsabilidades:
 
     - Normalizar cada valor al tipo esperado.
-    - Convertir la naturaleza del contratista.
+    - Inferir la naturaleza del contratista desde su documento.
     - Aplicar valores configurables del lote.
     - Acumular todos los errores detectados en la fila.
     - Construir entidades de dominio solamente si la fila es válida.
@@ -35,32 +34,12 @@ class ContractRowMapper:
     Esta clase no conoce openpyxl, pandas ni Selenium.
     """
 
-    LEGAL_ENTITY_VALUES: frozenset[str] = frozenset(
-        {
-            "juridica",
-            "persona juridica",
-            "persona legal",
-            "entidad juridica",
-            "empresa",
-            "legal",
-            "nit",
-        }
-    )
-
-    NATURAL_PERSON_VALUES: frozenset[str] = frozenset(
-        {
-            "natural",
-            "persona natural",
-            "persona",
-            "persona fisica",
-        }
-    )
-
     def __init__(
         self,
         *,
         default_dependency: str | None,
         default_budget_year: int,
+        force_default_dependency: bool = False,
         normalizer: type[ValueNormalizer] = ValueNormalizer,
     ) -> None:
         self._default_dependency = (
@@ -70,6 +49,7 @@ class ContractRowMapper:
         )
 
         self._default_budget_year = int(default_budget_year)
+        self._force_default_dependency = bool(force_default_dependency)
         self._normalizer = normalizer
 
         if self._default_budget_year < 2000:
@@ -117,19 +97,8 @@ class ContractRowMapper:
             issues,
         )
 
-        contractor_nature_text = self._read(
-            canonical_row,
-            ContractField.CONTRACTOR_NATURE,
-            self._normalizer.to_text,
-            issues,
-        )
-
-        contractor_nature = self._parse_contractor_nature(
-            contractor_nature_text,
-            raw_value=canonical_row.get(
-                ContractField.CONTRACTOR_NATURE
-            ),
-            issues=issues,
+        contractor_nature = self._infer_contractor_nature(
+            contractor_document
         )
 
         project_code = self._read(
@@ -216,13 +185,10 @@ class ContractRowMapper:
             issues,
         )
 
-        supervisor_type = self._read(
-            canonical_row,
-            ContractField.SUPERVISOR_TYPE,
-            self._normalizer.to_text,
-            issues,
-            required=False,
-        )
+        # Regla administrativa: el interventor siempre es interno.
+        # La columna del Excel se conserva solo por compatibilidad,
+        # pero su contenido no modifica el valor institucional.
+        supervisor_type = "Interno"
 
         cdp_code = self._read(
             canonical_row,
@@ -236,7 +202,6 @@ class ContractRowMapper:
             ContractField.BUDGET_REGISTER_NUMBER,
             self._normalizer.to_text,
             issues,
-            required=False,
         )
 
         budget_register_date = self._read(
@@ -247,10 +212,11 @@ class ContractRowMapper:
             required=False,
         )
 
-        gross_total = self._read_gross_total(
+        gross_total = self._read(
             canonical_row,
-            amount=amount,
-            issues=issues,
+            ContractField.GROSS_TOTAL,
+            self._normalizer.to_decimal,
+            issues,
         )
 
         secop_url = self._read(
@@ -258,7 +224,6 @@ class ContractRowMapper:
             ContractField.SECOP_URL,
             self._normalizer.to_text,
             issues,
-            required=False,
         )
 
         guarantee_approval_date = self._read(
@@ -452,9 +417,14 @@ class ContractRowMapper:
                 required=required,
             )
         except ValueNormalizationError as error:
+            issue_code = (
+                "MISSING_CRITICAL_FIELD"
+                if required and self._normalizer.is_missing(raw_value)
+                else "INVALID_VALUE"
+            )
             issues.append(
                 ImportIssue(
-                    code="INVALID_VALUE",
+                    code=issue_code,
                     message=error.reason,
                     field=error.field,
                     raw_value=error.raw_value,
@@ -468,8 +438,10 @@ class ContractRowMapper:
         row: Mapping[str, Any],
         issues: list[ImportIssue],
     ) -> str | None:
-        raw_dependency = row.get(
-            ContractField.DEPENDENCY
+        raw_dependency = (
+            self._default_dependency
+            if self._force_default_dependency
+            else row.get(ContractField.DEPENDENCY)
         )
 
         if self._normalizer.is_missing(raw_dependency):
@@ -496,62 +468,26 @@ class ContractRowMapper:
 
             return None
 
-    def _parse_contractor_nature(
-        self,
-        value: str | None,
-        *,
-        raw_value: Any,
-        issues: list[ImportIssue],
+    @staticmethod
+    def _infer_contractor_nature(
+        contractor_document: str | None,
     ) -> ContractorNature | None:
-        if value is None:
+        """
+        Aplica la regla administrativa institucional.
+
+        - Documento con guion: persona jurídica.
+        - Documento sin guion: persona natural.
+
+        La validación de obligatoriedad del documento ocurre antes de
+        esta inferencia; por eso ``None`` solo se propaga para evitar
+        agregar errores duplicados a la misma fila.
+        """
+
+        if contractor_document is None:
             return None
 
-        normalized_value = normalize_header(value)
-
-        if normalized_value in self.LEGAL_ENTITY_VALUES:
-            return ContractorNature.LEGAL_ENTITY
-
-        if normalized_value in self.NATURAL_PERSON_VALUES:
-            return ContractorNature.NATURAL_PERSON
-
-        issues.append(
-            ImportIssue(
-                code="UNSUPPORTED_CONTRACTOR_NATURE",
-                message=(
-                    "La naturaleza del contratista debe indicar "
-                    "persona natural o persona jurídica."
-                ),
-                field=ContractField.CONTRACTOR_NATURE,
-                raw_value=raw_value,
-            )
-        )
-
-        return None
-
-    def _read_gross_total(
-        self,
-        row: Mapping[str, Any],
-        *,
-        amount: Any,
-        issues: list[ImportIssue],
-    ):
-        """
-        Si Total Bruto no está presente, utiliza el valor del contrato.
-
-        Si la columna está presente pero contiene un valor inválido,
-        se reporta el error en vez de ocultarlo usando el fallback.
-        """
-
-        raw_value = row.get(
-            ContractField.GROSS_TOTAL
-        )
-
-        if self._normalizer.is_missing(raw_value):
-            return amount
-
-        return self._read(
-            row,
-            ContractField.GROSS_TOTAL,
-            self._normalizer.to_decimal,
-            issues,
+        return (
+            ContractorNature.LEGAL_ENTITY
+            if "-" in contractor_document
+            else ContractorNature.NATURAL_PERSON
         )

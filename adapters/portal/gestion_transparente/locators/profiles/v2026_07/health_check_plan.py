@@ -297,19 +297,368 @@ V2026_07_HEALTH_CHECK_PHASES: tuple[
         ),
     ),
     PortalHealthCheckPhase(
-        name="budget_section",
-        label="Presupuesto posterior",
-        instructions=(
-            "Esta fase pertenece a un incremento posterior. "
-            "Selecciona S por ahora."
+    name="general_final_validation",
+    label="Validación final de datos generales",
+    instructions=(
+        "Completa todos los datos obligatorios y verifica que "
+        "la clasificación presupuestal esté vinculada. Deja "
+        "visible el segundo botón Validar y presiona Enter "
+        "antes de pulsarlo."
+    ),
+    keys=(
+        "general.final_validate_button",
         ),
-        keys=(
-            "budget.section",
-            "budget.item_input",
-            "budget.subsector_input",
-            "budget.cdp_input",
-            "budget.gross_total_input",
-            "budget.save_button",
+    ),
+    PortalHealthCheckPhase(
+    name="general_validation_result",
+    label="Datos generales validados",
+    instructions=(
+        "Pulsa el segundo botón Validar y espera hasta que "
+        "desaparezca y sea reemplazado por Guardar y Volver. "
+        "Presiona Enter cuando Guardar esté visible."
+    ),
+    keys=(
+        "general.validation_success",
+        "general.save_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="general_save_success",
+    label="Contrato registrado exitosamente",
+    instructions=(
+        "Pulsa Guardar y espera el diálogo Éxito con el mensaje "
+        "Se ha registrado el contrato exitosamente. No pulses "
+        "Aceptar todavía. Presiona Enter con el diálogo abierto."
+    ),
+    keys=(
+        "general.save_success_dialog",
+        "general.save_success_accept",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="supervisor_transition",
+    label="Transición a interventor o supervisor",
+    instructions=(
+        "Pulsa Aceptar en el diálogo de éxito y espera hasta "
+        "que aparezca VINCULAR INTERVENTOR/SUPERVISOR / "
+        "NUEVO CONTRATO. Presiona Enter en esa pantalla."
+    ),
+    keys=(
+        "general.contract_saved",
+        "supervisor.section",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="supervisor_initial_controls",
+    label="Inicio de interventor o supervisor",
+    instructions=(
+        "En la pantalla VINCULAR INTERVENTOR/SUPERVISOR, "
+        "ubica el botón Buscar Interventor / Supervisor. "
+        "No lo pulses hasta que esta fase sea comprobada."
+    ),
+    keys=(
+        "supervisor.search_open",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="supervisor_search_dialog",
+    label="Diálogo de interventores",
+    instructions=(
+        "Abre Buscar Interventor / Supervisor. Deben verse "
+        "el diálogo Interventores y la opción Persona. "
+        "No selecciones Persona todavía."
+    ),
+    keys=(
+        "supervisor.dialog",
+        "supervisor.nature_person",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="supervisor_person_fields",
+    label="Identificación del supervisor",
+    instructions=(
+        "Selecciona Persona. Deben aparecer Tipo de "
+        "Identificación e Identificación. Selecciona el "
+        "tipo correspondiente e ingresa una cédula "
+        "autorizada. Pulsa BUSCAR y espera a que aparezca "
+        "la lista de coincidencias."
+    ),
+    keys=(
+        "supervisor.id_type",
+        "supervisor.document_input",
+        "supervisor.search_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="supervisor_search_results",
+    label="Coincidencia del supervisor",
+    instructions=(
+        "Espera hasta que aparezca la coincidencia exacta "
+        "en Lista de Coincidencias y el botón Seleccionar. "
+        "No selecciones la fila todavía."
+    ),
+    keys=(
+        "supervisor.result_row",
+        "supervisor.select_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="supervisor_selected",
+    label="Supervisor seleccionado",
+    instructions=(
+        "Pulsa Seleccionar. En el formulario principal, "
+        "elige Tipo Interno o el valor correspondiente. "
+        "Deja visible el botón Validar y no lo pulses "
+        "hasta comprobar esta fase."
+    ),
+    keys=(
+        "supervisor.selected_identifier",
+        "supervisor.type_input",
+        "supervisor.contract_input",
+        "supervisor.validate_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="supervisor_validation_result",
+    label="Supervisor validado",
+    instructions=(
+        "Pulsa Validar y espera hasta que aparezca "
+        "Vincular y Volver. No pulses Vincular todavía."
+    ),
+    keys=(
+        "supervisor.validation_success",
+        "supervisor.link_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="supervisor_link_success",
+    label="Supervisor vinculado exitosamente",
+    instructions=(
+        "Pulsa Vincular y espera el diálogo Éxito con "
+        "el mensaje Se ha vinculado el interventor "
+        "exitosamente. No pulses Aceptar todavía."
+    ),
+    keys=(
+        "supervisor.link_success_dialog",
+        "supervisor.link_success_accept",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="availability_transition",
+    label="Transición a disponibilidad presupuestal",
+    instructions=(
+        "Pulsa Aceptar y espera la pantalla VINCULAR "
+        "DISPONIBILIDAD PRESUPUESTAL / NUEVO CONTRATO. "
+        "No vincules ningún CDP todavía."
+    ),
+    keys=(
+        "supervisor.linked",
+        "availability.section",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="availability_initial_controls",
+    label="Controles de disponibilidad presupuestal",
+    instructions=(
+        "En la pantalla de disponibilidad, ubica el campo "
+        "Buscar de la primera tabla. No vincules todavía "
+        "ninguna fila."
+    ),
+    keys=(
+        "availability.search_input",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="availability_target_result",
+    label="Disponibilidad correspondiente al CDP",
+    instructions=(
+        "Busca o ubica el CDP autorizado. Deja visible "
+        "su fila, la celda CÓDIGO CDP y el botón Vincular. "
+        "No pulses Vincular todavía."
+    ),
+    keys=(
+        "availability.available_row",
+        "availability.cdp_cell",
+        "availability.link_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="availability_link_result",
+    label="Disponibilidad vinculada exitosamente",
+    instructions=(
+        "Pulsa Vincular en la fila exacta del CDP. Cuando "
+        "aparezca la notificación de éxito, presiona Enter "
+        "antes de que desaparezca. La disponibilidad también "
+        "debe aparecer en la tabla de vinculadas."
+    ),
+    keys=(
+        "availability.link_success",
+        "availability.linked_section",
+        "availability.linked_row",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="availability_continue",
+    label="Continuar a registro presupuestal",
+    instructions=(
+        "Verifica que la disponibilidad permanezca en la "
+        "tabla vinculada y deja visible Continuar. Presiona "
+        "Enter antes de pulsarlo."
+    ),
+    keys=(
+        "availability.continue_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="budget_register_transition",
+    label="Transición a registro presupuestal",
+    instructions=(
+        "Pulsa Continuar y espera hasta que aparezca "
+        "RETIRAR REGISTRO PRESUPUESTAL / EDITAR CONTRATO. "
+        "No ingreses todavía datos presupuestales."
+    ),
+    keys=(
+        "availability.linked",
+        "budget_register.section",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="budget_register_initial_controls",
+    label="Controles del registro presupuestal",
+    instructions=(
+        "En la pantalla de registro presupuestal, ubica "
+        "Número, Fecha, Disponibilidad Presupuestal, "
+        "Total Bruto y Validar. No diligencies todavía "
+        "los campos."
+    ),
+    keys=(
+        "budget_register.number_input",
+        "budget_register.date_input",
+        "budget_register.availability_select",
+        "budget_register.gross_total_input",
+        "budget_register.validate_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="budget_register_availability_options",
+    label="Disponibilidad del registro presupuestal",
+    instructions=(
+        "Ingresa el número y la fecha del registro. Abre "
+        "Disponibilidad Presupuestal y deja visible la "
+        "opción correspondiente al CDP. No la selecciones "
+        "hasta comprobar esta fase."
+    ),
+    keys=(
+        "budget_register.availability_option",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="budget_register_validation_result",
+    label="Registro presupuestal validado",
+    instructions=(
+        "Selecciona la disponibilidad exacta, ingresa "
+        "Total Bruto y pulsa Validar. Espera a que los "
+        "campos queden deshabilitados y aparezca Vincular. "
+        "No pulses Vincular todavía."
+    ),
+    keys=(
+        "budget_register.validation_success",
+        "budget_register.link_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="budget_register_link_success",
+    label="Registro presupuestal vinculado",
+    instructions=(
+        "Pulsa Vincular y espera el diálogo Éxito con el "
+        "mensaje de vinculación del registro presupuestal. "
+        "No pulses Aceptar todavía."
+    ),
+    keys=(
+        "budget_register.link_success_dialog",
+        "budget_register.link_success_accept",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="additional_dates_transition",
+    label="Transición a fechas adicionales",
+    instructions=(
+        "Pulsa Aceptar y espera hasta que aparezca "
+        "VINCULAR FECHAS / NUEVO CONTRATO. No diligencies "
+        "todavía las fechas."
+    ),
+    keys=(
+        "budget_register.linked",
+        "additional_dates.section",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="additional_dates_initial_controls",
+    label="Controles de fechas adicionales",
+    instructions=(
+        "En VINCULAR FECHAS, ubica los cuatro campos "
+        "de fecha, Validar y Saltar Paso. No diligencies "
+        "todavía ninguna fecha."
+    ),
+    keys=(
+        "additional_dates.opening_date_input",
+        "additional_dates.guarantee_approval_date_input",
+        "additional_dates.web_publication_date_input",
+        "additional_dates.secop_publication_date_input",
+        "additional_dates.validate_button",
+        "additional_dates.skip_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="additional_dates_calendar",
+    label="Calendario de fechas adicionales",
+    instructions=(
+        "Abre cualquiera de los campos de fecha y deja "
+        "visible el calendario con los días disponibles. "
+        "No selecciones todavía una fecha."
+    ),
+    keys=(
+        "additional_dates.calendar_dialog",
+        "additional_dates.calendar_day_option",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="additional_dates_validation_result",
+    label="Fechas adicionales validadas",
+    instructions=(
+        "Diligencia las fechas aplicables y pulsa Validar. "
+        "Espera hasta que los campos queden deshabilitados "
+        "y aparezca Vincular. No pulses Vincular todavía."
+    ),
+    keys=(
+        "additional_dates.validation_success",
+        "additional_dates.link_button",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="additional_dates_link_success",
+    label="Fechas adicionales vinculadas",
+    instructions=(
+        "Pulsa Vincular y espera el diálogo Éxito con "
+        "el mensaje de vinculación de las fechas. "
+        "No pulses Aceptar todavía."
+    ),
+    keys=(
+        "additional_dates.link_success_dialog",
+        "additional_dates.link_success_accept",
+        ),
+    ),
+    PortalHealthCheckPhase(
+    name="file_reported_transition",
+    label="Transición a anexos del contrato",
+    instructions=(
+        "Pulsa Aceptar y espera hasta que aparezca "
+        "VINCULAR ANEXOS / NUEVO CONTRATO. No adjuntes "
+        "todavía ningún archivo."
+    ),
+    keys=(
+        "additional_dates.linked",
+        "file_reported.section",
         ),
     ),
 )

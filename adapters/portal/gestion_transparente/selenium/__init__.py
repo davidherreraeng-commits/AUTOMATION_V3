@@ -19,6 +19,11 @@ from adapters.portal.gestion_transparente.selenium.gestion_transparente_portal i
 from adapters.portal.gestion_transparente.selenium.waits import (
     SeleniumWaits,
 )
+from adapters.portal.gestion_transparente.selenium.verified_selection import (
+    VerifiedSelectionInteractor,
+    VerifiedSelectionPolicy,
+    VerifiedSelectionResult,
+)
 from adapters.portal.gestion_transparente.selenium.diagnostics import (
     BrowserDiagnostics,
     DiagnosticEvidence,
@@ -40,4 +45,7 @@ __all__ = [
     "BrowserDiagnostics",
     "DiagnosticEvidence",
     "DiagnosticsCaptureError",
+    "VerifiedSelectionResult",
+    "VerifiedSelectionPolicy",
+    "VerifiedSelectionInteractor",
 ]
