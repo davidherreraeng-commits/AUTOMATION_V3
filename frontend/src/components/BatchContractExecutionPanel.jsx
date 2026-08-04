@@ -5,6 +5,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import ReplayIcon from "@mui/icons-material/Replay";
 import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import SecurityOutlinedIcon from "@mui/icons-material/SecurityOutlined";
+import VpnKeyOutlinedIcon from "@mui/icons-material/VpnKeyOutlined";
 import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 import {
   Accordion,
@@ -38,6 +39,7 @@ import {
 import { useMemo, useState } from "react";
 import {
   applyContractExecutionToBatch,
+  canSubmitContractExecution,
   confirmationMatches,
   contractActionLabel,
   executeSelectedContract,
@@ -45,6 +47,8 @@ import {
   getContractExecutionEvidence,
   getContractExecutionPreflight,
   getContractExecutionStatus,
+  getRealWriteAuthorization,
+  issueRealWriteAuthorization,
 } from "../api/batchContractExecution";
 
 const EXECUTION_MODES = {
@@ -293,6 +297,11 @@ function BatchContractExecutionPanel({
   const [busyItemId, setBusyItemId] = useState(null);
   const [dialogItem, setDialogItem] = useState(null);
   const [confirmation, setConfirmation] = useState("");
+  const [authorizationConfirmation, setAuthorizationConfirmation] =
+    useState("");
+  const [authorizations, setAuthorizations] = useState({});
+  const [authorizationTokens, setAuthorizationTokens] = useState({});
+  const [authorizingItemId, setAuthorizingItemId] = useState(null);
 
   const contracts = batch?.contracts ?? [];
   const isSuperuser = user?.role === "SUPERUSER";
@@ -305,17 +314,43 @@ function BatchContractExecutionPanel({
   const selectedEvidence = dialogItem
     ? evidences[dialogItem.item_id]
     : null;
+  const selectedAuthorization = dialogItem
+    ? authorizations[dialogItem.item_id]
+    : null;
+  const selectedAuthorizationToken = dialogItem
+    ? authorizationTokens[dialogItem.item_id]
+    : null;
   const modeMeta =
     EXECUTION_MODES[executionMode] ?? EXECUTION_MODES.DRY_RUN;
 
   const confirmationValid = useMemo(
     () =>
-      Boolean(selectedPreflight?.can_execute) &&
-      confirmationMatches(
+      canSubmitContractExecution({
+        preflight: selectedPreflight,
+        mode: executionMode,
         confirmation,
-        selectedPreflight?.required_confirmation,
+        authorizationToken: selectedAuthorizationToken,
+      }),
+    [
+      confirmation,
+      executionMode,
+      selectedAuthorizationToken,
+      selectedPreflight,
+    ],
+  );
+
+  const authorizationConfirmationValid = useMemo(
+    () =>
+      executionMode === "REAL" &&
+      confirmationMatches(
+        authorizationConfirmation,
+        selectedPreflight?.authorization_required_confirmation,
       ),
-    [confirmation, selectedPreflight],
+    [
+      authorizationConfirmation,
+      executionMode,
+      selectedPreflight,
+    ],
   );
 
   if (!batch || !isSuperuser) return null;
@@ -335,8 +370,11 @@ function BatchContractExecutionPanel({
     setPreflights({});
     setResults({});
     setEvidences({});
+    setAuthorizations({});
+    setAuthorizationTokens({});
     setDialogItem(null);
     setConfirmation("");
+    setAuthorizationConfirmation("");
   };
 
   const publishResult = (result) => {
@@ -372,6 +410,28 @@ function BatchContractExecutionPanel({
     }
   };
 
+  const loadAuthorizationStatus = async (item) => {
+    if (executionMode !== "REAL") return null;
+    try {
+      const authorization = await getRealWriteAuthorization({
+        batchId: batch.batch_id,
+        itemId: item.item_id,
+      });
+      setAuthorizations((current) => ({
+        ...current,
+        [item.item_id]: authorization,
+      }));
+      return authorization;
+    } catch (error) {
+      const problem = extractExecutionApiError(
+        error,
+        "No fue posible consultar la autorización temporal.",
+      );
+      onNotify?.("warning", problem.message);
+      return null;
+    }
+  };
+
   const loadPreflight = async (
     item,
     { openDialog = true } = {},
@@ -387,9 +447,13 @@ function BatchContractExecutionPanel({
         ...current,
         [item.item_id]: preflight,
       }));
+      if (executionMode === "REAL") {
+        await loadAuthorizationStatus(item);
+      }
       if (openDialog) {
         setDialogItem(item);
         setConfirmation("");
+        setAuthorizationConfirmation("");
       }
       onNotify?.(
         preflight.can_execute ? "success" : "warning",
@@ -443,11 +507,67 @@ function BatchContractExecutionPanel({
     }
   };
 
+  const issueAuthorization = async () => {
+    if (
+      !dialogItem ||
+      !selectedPreflight ||
+      !authorizationConfirmationValid ||
+      authorizingItemId ||
+      busyItemId
+    ) {
+      return;
+    }
+
+    setAuthorizingItemId(dialogItem.item_id);
+    onBusyChange?.(true);
+    try {
+      const authorization = await issueRealWriteAuthorization({
+        batchId: batch.batch_id,
+        itemId: dialogItem.item_id,
+        confirmation: authorizationConfirmation,
+      });
+      setAuthorizations((current) => ({
+        ...current,
+        [dialogItem.item_id]: authorization,
+      }));
+      setAuthorizationTokens((current) => ({
+        ...current,
+        [dialogItem.item_id]: authorization.authorization_token,
+      }));
+      setAuthorizationConfirmation("");
+      await loadPreflight(dialogItem, { openDialog: false });
+      onNotify?.(
+        "success",
+        `Autorización temporal emitida para ${dialogItem.contract_number}.`,
+      );
+    } catch (error) {
+      const problem = extractExecutionApiError(
+        error,
+        "No fue posible emitir la autorización temporal.",
+      );
+      if (problem.requiredConfirmation) {
+        setPreflights((current) => ({
+          ...current,
+          [dialogItem.item_id]: {
+            ...current[dialogItem.item_id],
+            authorization_required_confirmation:
+              problem.requiredConfirmation,
+          },
+        }));
+      }
+      onNotify?.("error", problem.message);
+    } finally {
+      setAuthorizingItemId(null);
+      onBusyChange?.(false);
+    }
+  };
+
   const executeContract = async () => {
     if (
       !dialogItem ||
       !selectedPreflight ||
       !confirmationValid ||
+      (executionMode === "REAL" && !selectedAuthorizationToken) ||
       busyItemId
     ) {
       return;
@@ -465,11 +585,24 @@ function BatchContractExecutionPanel({
             ? selectedPreflight.execution_id
             : null,
         mode: executionMode,
+        authorizationToken:
+          executionMode === "REAL"
+            ? selectedAuthorizationToken
+            : null,
       });
       publishResult(result);
       await loadEvidence(dialogItem, result.correlation_id);
+      if (executionMode === "REAL") {
+        setAuthorizationTokens((current) => {
+          const next = { ...current };
+          delete next[dialogItem.item_id];
+          return next;
+        });
+        await loadAuthorizationStatus(dialogItem);
+      }
       setDialogItem(null);
       setConfirmation("");
+      setAuthorizationConfirmation("");
       onNotify?.(
         result.success
           ? "success"
@@ -508,6 +641,13 @@ function BatchContractExecutionPanel({
       }
       onNotify?.("error", problem.message);
     } finally {
+      if (executionMode === "REAL" && dialogItem) {
+        setAuthorizationTokens((current) => {
+          const next = { ...current };
+          delete next[dialogItem.item_id];
+          return next;
+        });
+      }
       setBusyItemId(null);
       onBusyChange?.(false);
     }
@@ -746,7 +886,7 @@ function BatchContractExecutionPanel({
       <Dialog
         open={Boolean(dialogItem)}
         onClose={
-          busyItemId
+          busyItemId || authorizingItemId
             ? undefined
             : () => setDialogItem(null)
         }
@@ -800,6 +940,163 @@ function BatchContractExecutionPanel({
                       La escritura real no tiene autorización
                       institucional en el servidor.
                     </Alert>
+                  )}
+
+                {executionMode === "REAL" &&
+                  selectedPreflight.real_write_enabled && (
+                    <Paper
+                      variant="outlined"
+                      sx={{ p: 2, borderRadius: 2 }}
+                    >
+                      <Stack spacing={1.5}>
+                        <Stack
+                          direction={{ xs: "column", sm: "row" }}
+                          spacing={1}
+                          alignItems={{ sm: "center" }}
+                          justifyContent="space-between"
+                        >
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            alignItems="center"
+                          >
+                            <VpnKeyOutlinedIcon color="error" />
+                            <Typography
+                              variant="subtitle2"
+                              fontWeight="bold"
+                            >
+                              Autorización temporal de un solo uso
+                            </Typography>
+                          </Stack>
+                          <Chip
+                            size="small"
+                            color={
+                              selectedPreflight.authorization_available
+                                ? "success"
+                                : "warning"
+                            }
+                            label={
+                              selectedPreflight.authorization_status ??
+                              "NO EMITIDA"
+                            }
+                          />
+                        </Stack>
+
+                        {selectedPreflight.authorization_expires_at && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                          >
+                            Vence:{" "}
+                            {formatDateTime(
+                              selectedPreflight.authorization_expires_at,
+                            )}
+                          </Typography>
+                        )}
+
+                        {selectedPreflight.authorization_available &&
+                          selectedAuthorizationToken && (
+                            <Alert severity="success">
+                              El token temporal está disponible únicamente
+                              en esta sesión del navegador. Se consumirá al
+                              iniciar la escritura.
+                            </Alert>
+                          )}
+
+                        {selectedPreflight.authorization_available &&
+                          !selectedAuthorizationToken && (
+                            <Alert severity="warning">
+                              Existe una autorización activa, pero su token
+                              no está disponible en esta sesión. Emita una
+                              nueva autorización para reemplazarla.
+                            </Alert>
+                          )}
+
+                        <Typography variant="body2">
+                          Para emitir o reemplazar la autorización escriba:
+                        </Typography>
+                        <Paper
+                          variant="outlined"
+                          sx={{
+                            p: 1.25,
+                            backgroundColor: "#fff8f8",
+                          }}
+                        >
+                          <Typography
+                            component="code"
+                            fontWeight="bold"
+                          >
+                            {
+                              selectedPreflight
+                                .authorization_required_confirmation
+                            }
+                          </Typography>
+                        </Paper>
+                        <TextField
+                          fullWidth
+                          label="Confirmación de autorización temporal"
+                          value={authorizationConfirmation}
+                          onChange={(event) =>
+                            setAuthorizationConfirmation(
+                              event.target.value,
+                            )
+                          }
+                          error={
+                            Boolean(authorizationConfirmation) &&
+                            !authorizationConfirmationValid
+                          }
+                          helperText={
+                            authorizationConfirmation &&
+                            !authorizationConfirmationValid
+                              ? "La frase de autorización no coincide."
+                              : `Vigencia máxima: ${
+                                  selectedPreflight
+                                    .authorization_ttl_seconds ?? 300
+                                } segundos.`
+                          }
+                          disabled={
+                            Boolean(authorizingItemId) ||
+                            Boolean(busyItemId)
+                          }
+                        />
+                        <Box>
+                          <Button
+                            variant="outlined"
+                            color="error"
+                            startIcon={
+                              authorizingItemId ? (
+                                <CircularProgress size={17} />
+                              ) : (
+                                <VpnKeyOutlinedIcon />
+                              )
+                            }
+                            onClick={issueAuthorization}
+                            disabled={
+                              !authorizationConfirmationValid ||
+                              Boolean(authorizingItemId) ||
+                              Boolean(busyItemId)
+                            }
+                          >
+                            {authorizingItemId
+                              ? "Emitiendo…"
+                              : selectedPreflight
+                                    .authorization_available
+                                ? "Reemplazar autorización"
+                                : "Emitir autorización temporal"}
+                          </Button>
+                        </Box>
+
+                        {selectedAuthorization?.events?.length > 0 && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                          >
+                            Eventos auditados:{" "}
+                            {selectedAuthorization.events.length}
+                          </Typography>
+                        )}
+                      </Stack>
+                    </Paper>
                   )}
 
                 {selectedPreflight.issues.map((issue) => (
@@ -876,7 +1173,10 @@ function BatchContractExecutionPanel({
         <DialogActions>
           <Button
             onClick={() => setDialogItem(null)}
-            disabled={Boolean(busyItemId)}
+            disabled={
+              Boolean(busyItemId) ||
+              Boolean(authorizingItemId)
+            }
           >
             Cerrar
           </Button>
@@ -890,7 +1190,11 @@ function BatchContractExecutionPanel({
               }
               onClick={executeContract}
               disabled={
-                !confirmationValid || Boolean(busyItemId)
+                !confirmationValid ||
+                Boolean(busyItemId) ||
+                Boolean(authorizingItemId) ||
+                (executionMode === "REAL" &&
+                  !selectedAuthorizationToken)
               }
               startIcon={
                 busyItemId ? (

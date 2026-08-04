@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   applyContractExecutionToBatch,
+  canSubmitContractExecution,
   confirmationMatches,
   contractActionLabel,
   normalizeConfirmation,
@@ -101,3 +102,44 @@ test("la simulación no cambia el estado operativo del lote", () => {
   assert.equal(updated.status, "READY");
   assert.equal(updated.contracts[0].status, "PENDING");
 });
+
+test("la escritura real exige un token temporal en memoria", () => {
+  const preflight = {
+    can_execute: true,
+    required_confirmation: "EJECUTAR CONTRATO 70-2026",
+  };
+
+  assert.equal(
+    canSubmitContractExecution({
+      preflight,
+      mode: "REAL",
+      confirmation: "EJECUTAR CONTRATO 70-2026",
+      authorizationToken: null,
+    }),
+    false,
+  );
+  assert.equal(
+    canSubmitContractExecution({
+      preflight,
+      mode: "REAL",
+      confirmation: "EJECUTAR CONTRATO 70-2026",
+      authorizationToken: "token-temporal",
+    }),
+    true,
+  );
+});
+
+test("la simulación no requiere autorización temporal", () => {
+  assert.equal(
+    canSubmitContractExecution({
+      preflight: {
+        can_execute: true,
+        required_confirmation: "SIMULAR CONTRATO 70-2026",
+      },
+      mode: "DRY_RUN",
+      confirmation: "simular contrato 70-2026",
+    }),
+    true,
+  );
+});
+

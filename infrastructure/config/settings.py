@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     )
     batch_execution_reject_unit_test_values: bool = True
     batch_execution_workers: int = Field(default=1, ge=1, le=4)
+    real_write_authorization_ttl_seconds: int = Field(
+        default=300,
+        ge=60,
+        le=1800,
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod

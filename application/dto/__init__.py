@@ -1,3 +1,8 @@
+from application.dto.real_write_authorization import (
+    IssuedRealWriteAuthorization,
+    RealWriteAuthorization,
+    RealWriteAuthorizationEvent,
+)
 from application.dto.batch_contract_execution import (
     BatchContractExecutionIssue,
     BatchContractExecutionPreflight,
@@ -40,6 +45,9 @@ from application.dto.step_execution import (
 )
 
 __all__ = [
+    "IssuedRealWriteAuthorization",
+    "RealWriteAuthorization",
+    "RealWriteAuthorizationEvent",
     "BatchContractExecutionIssue",
     "BatchContractExecutionPreflight",
     "BatchContractExecutionResult",

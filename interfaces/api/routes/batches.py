@@ -30,6 +30,17 @@ from domain.errors.execution_evidence_errors import (
     ExecutionEvidenceContextError,
     ExecutionEvidenceNotFoundError,
 )
+from domain.errors.real_write_authorization_errors import (
+    RealWriteAuthorizationConfirmationError,
+    RealWriteAuthorizationConsumedError,
+    RealWriteAuthorizationContextError,
+    RealWriteAuthorizationDisabledError,
+    RealWriteAuthorizationExpiredError,
+    RealWriteAuthorizationInvalidError,
+    RealWriteAuthorizationRepositoryError,
+    RealWriteAuthorizationRequiredError,
+    RealWriteAuthorizationRevokedError,
+)
 from domain.errors.batch_execution_errors import (
     BatchExecutionBlockedError,
     BatchExecutionInProgressError,
@@ -61,6 +72,8 @@ from interfaces.api.schemas.batches import (
     BatchContractExecutionRequest,
     BatchContractExecutionResponse,
     ContractExecutionEvidenceResponse,
+    RealWriteAuthorizationIssueRequest,
+    RealWriteAuthorizationResponse,
     BatchAssistantProbeResponse,
     BatchContractSaveProbeRequest,
     BatchContractSaveProbeResponse,
@@ -244,6 +257,8 @@ def contract_execution_preflight(
             item_id=item_id,
             dependency=actor.dependency,
             mode=mode,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
         )
     except BatchNotFoundError as error:
         raise HTTPException(
@@ -271,6 +286,145 @@ def contract_execution_preflight(
 
 
 @router.post(
+    "/{batch_id}/contracts/{item_id}/execution/authorization",
+    response_model=RealWriteAuthorizationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def issue_selected_contract_real_write_authorization(
+    batch_id: UUID,
+    item_id: UUID,
+    payload: RealWriteAuthorizationIssueRequest,
+    actor: Superuser,
+    service: Annotated[
+        ControlledBatchContractExecutionService,
+        Depends(get_batch_contract_execution_service),
+    ],
+) -> RealWriteAuthorizationResponse:
+    try:
+        issued = service.issue_real_write_authorization(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+            confirmation=payload.confirmation,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
+        )
+    except BatchNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except BatchContractItemNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except RealWriteAuthorizationConfirmationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": error.code,
+                "message": str(error),
+                "required_confirmation": error.required_confirmation,
+            },
+        ) from error
+    except RealWriteAuthorizationDisabledError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": error.code,
+                "message": str(error),
+            },
+        ) from error
+    except BatchContractExecutionBlockedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "REAL_WRITE_AUTHORIZATION_BLOCKED",
+                "message": str(error),
+                "issues": [
+                    {"code": code, "message": message}
+                    for code, message in error.issues
+                ],
+            },
+        ) from error
+    except (
+        BatchRepositoryError,
+        ExecutionRepositoryError,
+        RealWriteAuthorizationRepositoryError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "No fue posible emitir la autorización temporal."
+            ),
+        ) from error
+
+    return RealWriteAuthorizationResponse.from_issued(issued)
+
+
+@router.get(
+    "/{batch_id}/contracts/{item_id}/execution/authorization",
+    response_model=RealWriteAuthorizationResponse,
+)
+def get_selected_contract_real_write_authorization(
+    batch_id: UUID,
+    item_id: UUID,
+    actor: Superuser,
+    service: Annotated[
+        ControlledBatchContractExecutionService,
+        Depends(get_batch_contract_execution_service),
+    ],
+) -> RealWriteAuthorizationResponse:
+    try:
+        authorization, events = service.get_real_write_authorization(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
+        )
+        preflight = service.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+            mode=ExecutionMode.REAL,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
+        )
+    except BatchNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except BatchContractItemNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except (
+        BatchRepositoryError,
+        ExecutionRepositoryError,
+        RealWriteAuthorizationRepositoryError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "No fue posible consultar la autorización temporal."
+            ),
+        ) from error
+
+    return RealWriteAuthorizationResponse.from_status(
+        authorization=authorization,
+        events=events,
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number=preflight.item.contract.contract_number,
+        dependency=preflight.batch.dependency,
+    )
+
+
+@router.post(
     "/{batch_id}/contracts/{item_id}/execution",
     response_model=BatchContractExecutionResponse,
 )
@@ -294,6 +448,7 @@ def execute_selected_contract(
             mode=payload.mode,
             actor_username=actor.username,
             actor_user_id=actor.user_id,
+            authorization_token=payload.authorization_token,
         )
     except BatchNotFoundError as error:
         raise HTTPException(
@@ -325,6 +480,50 @@ def execute_selected_contract(
                     for code, message in error.issues
                 ],
             },
+        ) from error
+    except RealWriteAuthorizationConfirmationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": error.code,
+                "message": str(error),
+                "required_confirmation": error.required_confirmation,
+            },
+        ) from error
+    except (
+        RealWriteAuthorizationRequiredError,
+        RealWriteAuthorizationExpiredError,
+        RealWriteAuthorizationConsumedError,
+        RealWriteAuthorizationRevokedError,
+        RealWriteAuthorizationDisabledError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": error.code,
+                "message": str(error),
+            },
+        ) from error
+    except (
+        RealWriteAuthorizationInvalidError,
+        RealWriteAuthorizationContextError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": error.code,
+                "message": (
+                    "La autorización temporal no es válida para "
+                    "esta operación."
+                ),
+            },
+        ) from error
+    except RealWriteAuthorizationRepositoryError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "No fue posible validar la autorización temporal."
+            ),
         ) from error
     except (
         BatchContractExecutionIdentityError,
@@ -373,6 +572,8 @@ def get_selected_contract_execution(
             item_id=item_id,
             dependency=actor.dependency,
             mode=mode,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
         )
     except BatchNotFoundError as error:
         raise HTTPException(

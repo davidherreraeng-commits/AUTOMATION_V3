@@ -14,6 +14,11 @@ from application.dto.execution_evidence import (
     ContractExecutionEvidence,
     ExecutionEvidenceEvent,
 )
+from application.dto.real_write_authorization import (
+    IssuedRealWriteAuthorization,
+    RealWriteAuthorization,
+    RealWriteAuthorizationEvent,
+)
 from application.ports.contract_executor import ContractExecutor
 from application.ports.execution_evidence_repository import (
     ExecutionEvidenceRepository,
@@ -21,8 +26,15 @@ from application.ports.execution_evidence_repository import (
 from application.services.batch_contract_execution_service import (
     BatchContractExecutionService,
 )
-from application.use_cases.process_contract import ContractProcessingResult
-from domain.enums import ContractStep, ExecutionMode, ExecutionStatus
+from application.services.real_write_authorization_service import (
+    RealWriteAuthorizationService,
+)
+from domain.enums import (
+    ContractStep,
+    ExecutionMode,
+    ExecutionStatus,
+    RealWriteAuthorizationStatus,
+)
 from domain.errors.batch_contract_execution_errors import (
     BatchContractExecutionBlockedError,
     BatchContractExecutionConfirmationError,
@@ -32,11 +44,23 @@ from domain.errors.execution_evidence_errors import (
     ExecutionEvidenceContextError,
     ExecutionEvidenceNotFoundError,
 )
+from domain.errors.real_write_authorization_errors import (
+    RealWriteAuthorizationError,
+)
 from domain.models import ContractExecution
 
 
 class ControlledBatchContractExecutionService:
-    """Añade simulación, autorización real y auditoría al servicio 6C14C."""
+    """Simula, autoriza y audita la ejecución individual de contratos."""
+
+    AUTHORIZATION_ISSUE_CODES = frozenset(
+        {
+            "REAL_WRITE_AUTHORIZATION_REQUIRED",
+            "REAL_WRITE_AUTHORIZATION_EXPIRED",
+            "REAL_WRITE_AUTHORIZATION_ALREADY_CONSUMED",
+            "REAL_WRITE_AUTHORIZATION_REVOKED",
+        }
+    )
 
     DRY_RUN_IGNORED_ISSUES = frozenset(
         {
@@ -60,11 +84,13 @@ class ControlledBatchContractExecutionService:
         dry_run_executor: ContractExecutor,
         evidence: ExecutionEvidenceRepository,
         real_write_enabled: bool,
+        authorizations: RealWriteAuthorizationService,
     ) -> None:
         self._real = real_service
         self._dry_run = dry_run_executor
         self._evidence = evidence
         self._real_write_enabled = bool(real_write_enabled)
+        self._authorizations = authorizations
         self._simulation_lock = Lock()
         self._active_simulations: set[tuple[UUID, UUID]] = set()
 
@@ -75,6 +101,8 @@ class ControlledBatchContractExecutionService:
         item_id: UUID,
         dependency: str,
         mode: ExecutionMode = ExecutionMode.DRY_RUN,
+        actor_username: str = "",
+        actor_user_id: int | None = None,
     ) -> BatchContractExecutionPreflight:
         selected_mode = ExecutionMode(mode)
         base = self._real.preflight(
@@ -82,20 +110,70 @@ class ControlledBatchContractExecutionService:
             item_id=item_id,
             dependency=dependency,
         )
-        latest = self._evidence.get_latest(
+        latest_evidence = self._evidence.get_latest(
             batch_id=batch_id,
             item_id=item_id,
             mode=selected_mode,
         )
 
         if selected_mode is ExecutionMode.REAL:
+            authorization = (
+                self._authorizations.get_latest(
+                    batch_id=batch_id,
+                    item_id=item_id,
+                    actor_username=actor_username,
+                    actor_user_id=actor_user_id,
+                )
+                if actor_username
+                else None
+            )
+            issues = list(base.issues)
+            if self._real_write_enabled:
+                authorization_issue = self._authorization_issue(
+                    authorization
+                )
+                if authorization_issue is not None:
+                    issues.append(authorization_issue)
+
             return replace(
                 base,
+                issues=tuple(issues),
                 mode=selected_mode,
                 real_write_enabled=self._real_write_enabled,
                 simulation_available=True,
                 latest_correlation_id=(
-                    latest.correlation_id if latest is not None else None
+                    latest_evidence.correlation_id
+                    if latest_evidence is not None
+                    else None
+                ),
+                real_write_authorization_required=True,
+                authorization_available=(
+                    authorization is not None
+                    and authorization.status
+                    is RealWriteAuthorizationStatus.ACTIVE
+                ),
+                authorization_id=(
+                    authorization.authorization_id
+                    if authorization is not None
+                    else None
+                ),
+                authorization_status=(
+                    authorization.status
+                    if authorization is not None
+                    else None
+                ),
+                authorization_expires_at=(
+                    authorization.expires_at
+                    if authorization is not None
+                    else None
+                ),
+                authorization_required_confirmation=(
+                    self._authorizations.required_issue_confirmation(
+                        base.item.contract.contract_number
+                    )
+                ),
+                authorization_ttl_seconds=(
+                    self._authorizations.ttl_seconds
                 ),
             )
 
@@ -145,9 +223,82 @@ class ControlledBatchContractExecutionService:
             real_write_enabled=self._real_write_enabled,
             simulation_available=True,
             latest_correlation_id=(
-                latest.correlation_id if latest is not None else None
+                latest_evidence.correlation_id
+                if latest_evidence is not None
+                else None
             ),
+            real_write_authorization_required=False,
+            authorization_available=False,
+            authorization_id=None,
+            authorization_status=None,
+            authorization_expires_at=None,
+            authorization_required_confirmation=None,
+            authorization_ttl_seconds=None,
         )
+
+    def issue_real_write_authorization(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        dependency: str,
+        confirmation: str,
+        actor_username: str,
+        actor_user_id: int | None,
+    ) -> IssuedRealWriteAuthorization:
+        base = self._real.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=dependency,
+        )
+        blocking = tuple(
+            (issue.code, issue.message)
+            for issue in base.issues
+            if issue.blocking
+        )
+        if blocking:
+            raise BatchContractExecutionBlockedError(blocking)
+
+        return self._authorizations.issue(
+            batch_id=batch_id,
+            item_id=item_id,
+            contract_number=base.item.contract.contract_number,
+            dependency=base.batch.dependency,
+            actor_username=actor_username,
+            actor_user_id=actor_user_id,
+            confirmation=confirmation,
+        )
+
+    def get_real_write_authorization(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        dependency: str,
+        actor_username: str,
+        actor_user_id: int | None,
+    ) -> tuple[
+        RealWriteAuthorization | None,
+        tuple[RealWriteAuthorizationEvent, ...],
+    ]:
+        base = self._real.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=dependency,
+        )
+        authorization = self._authorizations.get_latest(
+            batch_id=batch_id,
+            item_id=item_id,
+            actor_username=actor_username,
+            actor_user_id=actor_user_id,
+        )
+        events = self._authorizations.list_events(
+            batch_id=batch_id,
+            item_id=item_id,
+            authorization_id=None,
+        )
+        _ = base
+        return authorization, events
 
     def execute(
         self,
@@ -160,6 +311,7 @@ class ControlledBatchContractExecutionService:
         actor_user_id: int | None,
         mode: ExecutionMode = ExecutionMode.DRY_RUN,
         execution_id: UUID | None = None,
+        authorization_token: str | None = None,
     ) -> BatchContractExecutionResult:
         selected_mode = ExecutionMode(mode)
         preflight = self.preflight(
@@ -167,11 +319,14 @@ class ControlledBatchContractExecutionService:
             item_id=item_id,
             dependency=dependency,
             mode=selected_mode,
+            actor_username=actor_username,
+            actor_user_id=actor_user_id,
         )
         blocking = tuple(
             (issue.code, issue.message)
             for issue in preflight.issues
             if issue.blocking
+            and issue.code not in self.AUTHORIZATION_ISSUE_CODES
         )
         if blocking:
             raise BatchContractExecutionBlockedError(blocking)
@@ -195,6 +350,33 @@ class ControlledBatchContractExecutionService:
             )
 
         try:
+            authorization = self._authorizations.consume(
+                token=authorization_token,
+                batch_id=batch_id,
+                item_id=item_id,
+                contract_number=preflight.item.contract.contract_number,
+                dependency=preflight.batch.dependency,
+                actor_username=actor_username,
+                actor_user_id=actor_user_id,
+                correlation_id=correlation_id,
+            )
+        except RealWriteAuthorizationError as error:
+            self._save_failure(
+                preflight=preflight,
+                correlation_id=correlation_id,
+                started_at=started_at,
+                actor_username=actor_username,
+                actor_user_id=actor_user_id,
+                error=error,
+                event_outcome="AUTHORIZATION_REJECTED",
+                event_metadata={
+                    "authorization_code": error.code,
+                    "writes_to_portal": False,
+                },
+            )
+            raise
+
+        try:
             result = self._real.execute(
                 batch_id=batch_id,
                 item_id=item_id,
@@ -210,6 +392,7 @@ class ControlledBatchContractExecutionService:
                 actor_username=actor_username,
                 actor_user_id=actor_user_id,
                 error=error,
+                authorization=authorization,
             )
             raise
 
@@ -220,6 +403,7 @@ class ControlledBatchContractExecutionService:
             started_at=started_at,
             actor_username=actor_username,
             actor_user_id=actor_user_id,
+            authorization=authorization,
         )
         self._evidence.save(evidence)
         return replace(
@@ -228,6 +412,8 @@ class ControlledBatchContractExecutionService:
             correlation_id=correlation_id,
             writes_to_portal=True,
             evidence_count=evidence.evidence_count,
+            authorization_id=authorization.authorization_id,
+            authorization_consumed_at=authorization.consumed_at,
         )
 
     def status(
@@ -237,6 +423,8 @@ class ControlledBatchContractExecutionService:
         item_id: UUID,
         dependency: str,
         mode: ExecutionMode = ExecutionMode.DRY_RUN,
+        actor_username: str = "",
+        actor_user_id: int | None = None,
     ) -> BatchContractExecutionResult:
         selected_mode = ExecutionMode(mode)
         if selected_mode is ExecutionMode.REAL:
@@ -250,6 +438,16 @@ class ControlledBatchContractExecutionService:
                 item_id=item_id,
                 mode=selected_mode,
             )
+            authorization = (
+                self._authorizations.get_latest(
+                    batch_id=batch_id,
+                    item_id=item_id,
+                    actor_username=actor_username,
+                    actor_user_id=actor_user_id,
+                )
+                if actor_username
+                else None
+            )
             return replace(
                 result,
                 mode=selected_mode,
@@ -259,6 +457,16 @@ class ControlledBatchContractExecutionService:
                 writes_to_portal=True,
                 evidence_count=(
                     latest.evidence_count if latest is not None else 0
+                ),
+                authorization_id=(
+                    authorization.authorization_id
+                    if authorization is not None
+                    else None
+                ),
+                authorization_consumed_at=(
+                    authorization.consumed_at
+                    if authorization is not None
+                    else None
                 ),
             )
 
@@ -433,25 +641,52 @@ class ControlledBatchContractExecutionService:
         started_at: datetime,
         actor_username: str,
         actor_user_id: int | None,
+        authorization: RealWriteAuthorization | None = None,
     ) -> ContractExecutionEvidence:
-        events = tuple(
-            ExecutionEvidenceEvent(
-                sequence=index,
-                step=transition.step,
-                outcome=transition.outcome.value,
-                message=transition.message,
-                recorded_at=transition.execution.updated_at,
-                metadata={
-                    "execution_status": transition.execution.status.value,
-                    "mode": result.mode.value,
-                },
-            )
-            for index, transition in enumerate(result.transitions, start=1)
-        )
-        if not events:
-            events = (
+        events: list[ExecutionEvidenceEvent] = []
+        if authorization is not None:
+            events.append(
                 ExecutionEvidenceEvent(
                     sequence=1,
+                    step=None,
+                    outcome="AUTHORIZATION_CONSUMED",
+                    message=(
+                        "Autorización temporal consumida antes de abrir "
+                        "la sesión de escritura real."
+                    ),
+                    recorded_at=(
+                        authorization.consumed_at
+                        or datetime.now(UTC)
+                    ),
+                    metadata={
+                        "authorization_id": str(
+                            authorization.authorization_id
+                        ),
+                        "expires_at": authorization.expires_at.isoformat(),
+                        "single_use": True,
+                    },
+                )
+            )
+
+        for transition in result.transitions:
+            events.append(
+                ExecutionEvidenceEvent(
+                    sequence=len(events) + 1,
+                    step=transition.step,
+                    outcome=transition.outcome.value,
+                    message=transition.message,
+                    recorded_at=transition.execution.updated_at,
+                    metadata={
+                        "execution_status": transition.execution.status.value,
+                        "mode": result.mode.value,
+                    },
+                )
+            )
+
+        if not result.transitions:
+            events.append(
+                ExecutionEvidenceEvent(
+                    sequence=len(events) + 1,
                     step=result.last_completed_step,
                     outcome=(
                         "COMPLETED" if result.success else "STOPPED"
@@ -467,7 +702,7 @@ class ControlledBatchContractExecutionService:
                         "transition_count": result.transition_count,
                         "mode": result.mode.value,
                     },
-                ),
+                )
             )
 
         return ContractExecutionEvidence(
@@ -497,7 +732,7 @@ class ControlledBatchContractExecutionService:
             attempt_count=result.attempt_count,
             error_code=result.error_code,
             technical_detail=result.technical_detail,
-            events=events,
+            events=tuple(events),
         )
 
     def _save_failure(
@@ -509,8 +744,48 @@ class ControlledBatchContractExecutionService:
         actor_username: str,
         actor_user_id: int | None,
         error: Exception,
+        authorization: RealWriteAuthorization | None = None,
+        event_outcome: str = "FAILED",
+        event_metadata: dict[str, object] | None = None,
     ) -> None:
         completed_at = datetime.now(UTC)
+        events: list[ExecutionEvidenceEvent] = []
+        if authorization is not None:
+            events.append(
+                ExecutionEvidenceEvent(
+                    sequence=1,
+                    step=None,
+                    outcome="AUTHORIZATION_CONSUMED",
+                    message=(
+                        "La autorización temporal fue consumida antes "
+                        "del intento de escritura."
+                    ),
+                    recorded_at=(
+                        authorization.consumed_at or completed_at
+                    ),
+                    metadata={
+                        "authorization_id": str(
+                            authorization.authorization_id
+                        ),
+                        "single_use": True,
+                    },
+                )
+            )
+        metadata = {
+            "exception_type": type(error).__name__,
+            "mode": preflight.mode.value,
+        }
+        metadata.update(event_metadata or {})
+        events.append(
+            ExecutionEvidenceEvent(
+                sequence=len(events) + 1,
+                step=None,
+                outcome=event_outcome,
+                message=str(error),
+                recorded_at=completed_at,
+                metadata=metadata,
+            )
+        )
         record = ContractExecutionEvidence(
             correlation_id=correlation_id,
             mode=preflight.mode,
@@ -528,21 +803,11 @@ class ControlledBatchContractExecutionService:
             operational_message=(
                 "La ejecución controlada se detuvo antes de completarse."
             ),
-            error_code=str(getattr(error, "code", type(error).__name__)),
-            technical_detail=f"{type(error).__name__}: {error}",
-            events=(
-                ExecutionEvidenceEvent(
-                    sequence=1,
-                    step=None,
-                    outcome="FAILED",
-                    message=str(error),
-                    recorded_at=completed_at,
-                    metadata={
-                        "exception_type": type(error).__name__,
-                        "mode": preflight.mode.value,
-                    },
-                ),
+            error_code=str(
+                getattr(error, "code", type(error).__name__)
             ),
+            technical_detail=f"{type(error).__name__}: {error}",
+            events=tuple(events),
         )
         self._evidence.save(record)
 
@@ -584,6 +849,47 @@ class ControlledBatchContractExecutionService:
             else "EJECUTAR CONTRATO"
         )
         return f"{prefix} {str(contract_number).strip()}"
+
+    @staticmethod
+    def _authorization_issue(
+        authorization: RealWriteAuthorization | None,
+    ) -> BatchContractExecutionIssue | None:
+        if authorization is None:
+            return BatchContractExecutionIssue(
+                code="REAL_WRITE_AUTHORIZATION_REQUIRED",
+                message=(
+                    "Debe emitir una autorización temporal de un solo "
+                    "uso para este contrato."
+                ),
+            )
+        if authorization.status is RealWriteAuthorizationStatus.ACTIVE:
+            return None
+        messages = {
+            RealWriteAuthorizationStatus.EXPIRED: (
+                "La última autorización temporal venció."
+            ),
+            RealWriteAuthorizationStatus.CONSUMED: (
+                "La última autorización temporal ya fue consumida."
+            ),
+            RealWriteAuthorizationStatus.REVOKED: (
+                "La última autorización temporal fue revocada."
+            ),
+        }
+        codes = {
+            RealWriteAuthorizationStatus.EXPIRED: (
+                "REAL_WRITE_AUTHORIZATION_EXPIRED"
+            ),
+            RealWriteAuthorizationStatus.CONSUMED: (
+                "REAL_WRITE_AUTHORIZATION_ALREADY_CONSUMED"
+            ),
+            RealWriteAuthorizationStatus.REVOKED: (
+                "REAL_WRITE_AUTHORIZATION_REVOKED"
+            ),
+        }
+        return BatchContractExecutionIssue(
+            code=codes[authorization.status],
+            message=messages[authorization.status],
+        )
 
     @staticmethod
     def _confirmation_identity(value: object) -> str:

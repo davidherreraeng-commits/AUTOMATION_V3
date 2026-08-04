@@ -232,6 +232,7 @@ def test_default_mode_should_simulate_and_publish_evidence(
         settings(tmp_path),
         portal_credential_verifier=FakeVerifier(),
         contract_executor=executor,
+        batch_portal_probe=object(),
     )
 
     with TestClient(app) as client:
@@ -294,6 +295,7 @@ def test_real_mode_should_require_institutional_server_authorization(
         settings(tmp_path),
         portal_credential_verifier=FakeVerifier(),
         contract_executor=executor,
+        batch_portal_probe=object(),
     )
 
     with TestClient(app) as client:
@@ -339,6 +341,7 @@ def test_authorized_real_mode_should_execute_selected_contract(
         settings(tmp_path),
         portal_credential_verifier=FakeVerifier(),
         contract_executor=executor,
+        batch_portal_probe=object(),
     )
 
     with TestClient(app) as client:
@@ -354,9 +357,54 @@ def test_authorized_real_mode_should_execute_selected_contract(
             params={"mode": "REAL"},
         )
         assert preflight.status_code == 200
-        assert preflight.json()["can_execute"] is True
-        assert preflight.json()["real_write_enabled"] is True
-        required = preflight.json()["required_confirmation"]
+        preflight_payload = preflight.json()
+        assert preflight_payload["can_execute"] is False
+        assert preflight_payload["real_write_enabled"] is True
+        assert preflight_payload["authorization_available"] is False
+        assert "REAL_WRITE_AUTHORIZATION_REQUIRED" in {
+            issue["code"] for issue in preflight_payload["issues"]
+        }
+
+        missing_token = client.post(
+            endpoint,
+            json={
+                "mode": "REAL",
+                "confirmation": "EJECUTAR CONTRATO 70-2026",
+            },
+        )
+        assert missing_token.status_code == 409
+        assert (
+            missing_token.json()["detail"]["code"]
+            == "REAL_WRITE_AUTHORIZATION_REQUIRED"
+        )
+        assert executor.calls == []
+
+        issued = client.post(
+            f"{endpoint}/authorization",
+            json={
+                "confirmation": (
+                    preflight_payload[
+                        "authorization_required_confirmation"
+                    ]
+                )
+            },
+        )
+        assert issued.status_code == 201
+        issued_payload = issued.json()
+        assert issued_payload["status"] == "ACTIVE"
+        assert issued_payload["available"] is True
+        assert issued_payload["authorization_token"]
+        assert issued_payload["events"][0]["event_type"] == "ISSUED"
+
+        ready = client.get(
+            f"{endpoint}/preflight",
+            params={"mode": "REAL"},
+        )
+        assert ready.status_code == 200
+        ready_payload = ready.json()
+        assert ready_payload["can_execute"] is True
+        assert ready_payload["authorization_available"] is True
+        required = ready_payload["required_confirmation"]
         assert required == "EJECUTAR CONTRATO 70-2026"
 
         executed = client.post(
@@ -364,6 +412,9 @@ def test_authorized_real_mode_should_execute_selected_contract(
             json={
                 "mode": "REAL",
                 "confirmation": required,
+                "authorization_token": (
+                    issued_payload["authorization_token"]
+                ),
             },
         )
         assert executed.status_code == 200
@@ -374,6 +425,10 @@ def test_authorized_real_mode_should_execute_selected_contract(
         assert payload["item_status"] == "COMPLETED"
         assert payload["batch_status"] == "COMPLETED"
         assert payload["correlation_id"]
+        assert payload["authorization_id"] == (
+            issued_payload["authorization_id"]
+        )
+        assert payload["authorization_consumed_at"]
         assert executor.calls == [("70-2026", None)]
 
         evidence = client.get(
@@ -382,6 +437,21 @@ def test_authorized_real_mode_should_execute_selected_contract(
         assert evidence.status_code == 200
         assert evidence.json()["mode"] == "REAL"
         assert evidence.json()["actor_username"] == "jefe"
+        assert (
+            evidence.json()["events"][0]["outcome"]
+            == "AUTHORIZATION_CONSUMED"
+        )
+
+        authorization_status = client.get(
+            f"{endpoint}/authorization"
+        )
+        assert authorization_status.status_code == 200
+        assert authorization_status.json()["status"] == "CONSUMED"
+        assert authorization_status.json()["available"] is False
+        assert {
+            event["event_type"]
+            for event in authorization_status.json()["events"]
+        } >= {"ISSUED", "CONSUMED"}
 
 
 def test_operator_should_not_access_controlled_contract_execution(
@@ -394,6 +464,7 @@ def test_operator_should_not_access_controlled_contract_execution(
         settings(tmp_path),
         portal_credential_verifier=FakeVerifier(),
         contract_executor=executor,
+        batch_portal_probe=object(),
     )
 
     with TestClient(app) as client:
@@ -411,4 +482,15 @@ def test_operator_should_not_access_controlled_contract_execution(
         ).status_code == 403
         assert client.get(
             f"{endpoint}/evidence/{uuid4()}"
+        ).status_code == 403
+        assert client.get(
+            f"{endpoint}/authorization"
+        ).status_code == 403
+        assert client.post(
+            f"{endpoint}/authorization",
+            json={
+                "confirmation": (
+                    "AUTORIZAR ESCRITURA REAL 70-2026"
+                )
+            },
         ).status_code == 403

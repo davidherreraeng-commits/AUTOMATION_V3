@@ -33,3 +33,24 @@ export function contractActionLabel(preflight, mode = "DRY_RUN") {
   if (mode === "DRY_RUN") return "Simular";
   return preflight.resumable ? "Reanudar" : "Ejecutar";
 }
+
+export function canSubmitContractExecution({
+  preflight,
+  mode = "DRY_RUN",
+  confirmation,
+  authorizationToken = null,
+}) {
+  if (!preflight?.can_execute) return false;
+  if (
+    !confirmationMatches(
+      confirmation,
+      preflight.required_confirmation,
+    )
+  ) {
+    return false;
+  }
+  if (mode === "REAL" && !String(authorizationToken ?? "").trim()) {
+    return false;
+  }
+  return true;
+}

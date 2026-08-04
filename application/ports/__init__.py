@@ -1,3 +1,6 @@
+from application.ports.real_write_authorization_repository import (
+    RealWriteAuthorizationRepository,
+)
 from application.ports.contract_executor import ContractExecutor
 from application.ports.batch_portal_probe import (
     BatchAssistantProbeResult,
@@ -37,6 +40,7 @@ from application.ports.execution_repository import (
 )
 
 __all__ = [
+    "RealWriteAuthorizationRepository",
     "ContractExecutor",
     "BatchAssistantProbeResult",
     "BatchContractSaveProbeResult",

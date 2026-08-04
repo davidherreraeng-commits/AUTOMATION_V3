@@ -15,6 +15,9 @@ from adapters.persistence.sqlite.portal_credential_repository import (
     SQLitePortalCredentialRepository,
 )
 from adapters.persistence.sqlite.user_repository import SQLiteUserRepository
+from adapters.persistence.sqlite.real_write_authorization_repository import (
+    SQLiteRealWriteAuthorizationRepository,
+)
 from adapters.persistence.json_execution_evidence_repository import (
     JsonExecutionEvidenceRepository,
 )
@@ -31,6 +34,9 @@ from application.services.batch_contract_execution_service import (
 )
 from application.services.controlled_batch_contract_execution_service import (
     ControlledBatchContractExecutionService,
+)
+from application.services.real_write_authorization_service import (
+    RealWriteAuthorizationService,
 )
 from application.services.batch_execution_service import BatchExecutionService
 from application.use_cases.execute_contract_in_session import (
@@ -93,6 +99,13 @@ def create_app(
             resolved_settings.resolved_database_path
         )
         checkpoints = ExecutionCheckpointService(executions)
+
+        real_write_authorizations = (
+            SQLiteRealWriteAuthorizationRepository(
+                resolved_settings.resolved_database_path
+            )
+        )
+        real_write_authorizations.initialize()
 
         file_validator = contract_file_validator or ExcelUploadValidator(
             upload_directory=resolved_settings.resolved_upload_directory,
@@ -199,13 +212,27 @@ def create_app(
         app.state.execution_evidence_repository = (
             execution_evidence_repository
         )
+        app.state.real_write_authorization_repository = (
+            real_write_authorizations
+        )
         app.state.real_write_enabled = real_write_enabled
+        real_write_authorization_service = RealWriteAuthorizationService(
+            repository=real_write_authorizations,
+            enabled=real_write_enabled,
+            ttl_seconds=(
+                resolved_settings.real_write_authorization_ttl_seconds
+            ),
+        )
+        app.state.real_write_authorization_service = (
+            real_write_authorization_service
+        )
         app.state.batch_contract_execution_service = (
             ControlledBatchContractExecutionService(
                 real_service=real_contract_execution_service,
                 dry_run_executor=DryRunContractExecutor(),
                 evidence=execution_evidence_repository,
                 real_write_enabled=real_write_enabled,
+                authorizations=real_write_authorization_service,
             )
         )
 

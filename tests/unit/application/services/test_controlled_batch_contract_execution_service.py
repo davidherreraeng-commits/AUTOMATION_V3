@@ -15,12 +15,16 @@ from adapters.persistence.sqlite import (
     SQLiteBatchRepository,
     SQLiteExecutionRepository,
     SQLitePortalCredentialRepository,
+    SQLiteRealWriteAuthorizationRepository,
 )
 from application.services.batch_contract_execution_service import (
     BatchContractExecutionService,
 )
 from application.services.controlled_batch_contract_execution_service import (
     ControlledBatchContractExecutionService,
+)
+from application.services.real_write_authorization_service import (
+    RealWriteAuthorizationService,
 )
 from application.use_cases.process_contract import ContractProcessingResult
 from application.workflow import ExecutionCheckpointService
@@ -171,11 +175,21 @@ def build_controlled_service(
         tmp_path / "execution_evidence"
     )
     evidence.initialize()
+    authorization_repository = (
+        SQLiteRealWriteAuthorizationRepository(database)
+    )
+    authorization_repository.initialize()
+    authorization_service = RealWriteAuthorizationService(
+        repository=authorization_repository,
+        enabled=real_write_enabled,
+        ttl_seconds=300,
+    )
     controlled = ControlledBatchContractExecutionService(
         real_service=real_service,
         dry_run_executor=DryRunContractExecutor(),
         evidence=evidence,
         real_write_enabled=real_write_enabled,
+        authorizations=authorization_service,
     )
     return stored, real_executor, evidence, controlled
 
@@ -325,6 +339,15 @@ def test_authorized_real_write_delegates_and_records_evidence(
     )
     item = batch.contracts[0]
 
+    issued = service.issue_real_write_authorization(
+        batch_id=batch.batch_id,
+        item_id=item.item_id,
+        dependency="Adquisiciones",
+        confirmation="AUTORIZAR ESCRITURA REAL 70-2026",
+        actor_username="jefe",
+        actor_user_id=1,
+    )
+
     result = service.execute(
         batch_id=batch.batch_id,
         item_id=item.item_id,
@@ -333,6 +356,7 @@ def test_authorized_real_write_delegates_and_records_evidence(
         actor_username="jefe",
         actor_user_id=1,
         mode=ExecutionMode.REAL,
+        authorization_token=issued.token,
     )
 
     assert result.mode is ExecutionMode.REAL
@@ -341,9 +365,12 @@ def test_authorized_real_write_delegates_and_records_evidence(
     assert result.item.status is BatchContractStatus.COMPLETED
     assert real_executor.calls == [("70-2026", None)]
     assert result.correlation_id is not None
+    assert result.authorization_id == issued.authorization.authorization_id
+    assert result.authorization_consumed_at is not None
 
     stored = evidence.get(result.correlation_id)
     assert stored is not None
     assert stored.mode is ExecutionMode.REAL
     assert stored.actor_username == "jefe"
-    assert stored.evidence_count == 1
+    assert stored.evidence_count == 2
+    assert stored.events[0].outcome == "AUTHORIZATION_CONSUMED"

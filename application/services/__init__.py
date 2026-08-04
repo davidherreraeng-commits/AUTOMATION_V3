@@ -1,3 +1,6 @@
+from application.services.real_write_authorization_service import (
+    RealWriteAuthorizationService,
+)
 from application.services.controlled_batch_contract_execution_service import (
     ControlledBatchContractExecutionService,
 )
@@ -18,6 +21,7 @@ from application.services.portal_credential_service import (
 from application.services.user_management_service import UserManagementService
 
 __all__ = [
+    "RealWriteAuthorizationService",
     "BatchContractExecutionService",
     "ControlledBatchContractExecutionService",
     "BatchExecutionService",

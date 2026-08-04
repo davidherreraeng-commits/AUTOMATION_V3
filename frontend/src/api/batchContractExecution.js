@@ -1,6 +1,7 @@
 import api from "./axiosConfig";
 import {
   applyContractExecutionToBatch,
+  canSubmitContractExecution,
   confirmationMatches,
   contractActionLabel,
   normalizeConfirmation,
@@ -8,6 +9,7 @@ import {
 
 export {
   applyContractExecutionToBatch,
+  canSubmitContractExecution,
   confirmationMatches,
   contractActionLabel,
   normalizeConfirmation,
@@ -39,12 +41,35 @@ export async function getContractExecutionStatus(
   return response.data;
 }
 
+export async function issueRealWriteAuthorization({
+  batchId,
+  itemId,
+  confirmation,
+}) {
+  const response = await api.post(
+    `/batches/${batchId}/contracts/${itemId}/execution/authorization`,
+    { confirmation },
+  );
+  return response.data;
+}
+
+export async function getRealWriteAuthorization({
+  batchId,
+  itemId,
+}) {
+  const response = await api.get(
+    `/batches/${batchId}/contracts/${itemId}/execution/authorization`,
+  );
+  return response.data;
+}
+
 export async function executeSelectedContract({
   batchId,
   itemId,
   confirmation,
   executionId = null,
   mode = "DRY_RUN",
+  authorizationToken = null,
 }) {
   const response = await api.post(
     `/batches/${batchId}/contracts/${itemId}/execution`,
@@ -52,6 +77,7 @@ export async function executeSelectedContract({
       confirmation,
       execution_id: executionId,
       mode,
+      authorization_token: authorizationToken,
     },
     {
       timeout: CONTRACT_EXECUTION_TIMEOUT_MS,

@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from domain.enums import ContractStep, ExecutionMode, ExecutionStatus
+from domain.enums import (
+    ContractStep,
+    ExecutionMode,
+    ExecutionStatus,
+    RealWriteAuthorizationStatus,
+)
 from domain.enums.batch_status import BatchContractStatus, BatchStatus
 from domain.models import ContractExecution
 from domain.models.contract_batch import BatchContract, ContractBatch
@@ -47,6 +52,13 @@ class BatchContractExecutionPreflight:
     real_write_enabled: bool = False
     simulation_available: bool = False
     latest_correlation_id: UUID | None = None
+    real_write_authorization_required: bool = False
+    authorization_available: bool = False
+    authorization_id: UUID | None = None
+    authorization_status: RealWriteAuthorizationStatus | None = None
+    authorization_expires_at: datetime | None = None
+    authorization_required_confirmation: str | None = None
+    authorization_ttl_seconds: int | None = None
 
     @property
     def can_execute(self) -> bool:
@@ -72,6 +84,8 @@ class BatchContractExecutionResult:
     correlation_id: UUID | None = None
     writes_to_portal: bool = True
     evidence_count: int = 0
+    authorization_id: UUID | None = None
+    authorization_consumed_at: datetime | None = None
     transitions: tuple[StepExecutionResult, ...] = ()
 
     @property

@@ -1,3 +1,15 @@
+from domain.errors.real_write_authorization_errors import (
+    RealWriteAuthorizationConfirmationError,
+    RealWriteAuthorizationConsumedError,
+    RealWriteAuthorizationContextError,
+    RealWriteAuthorizationDisabledError,
+    RealWriteAuthorizationError,
+    RealWriteAuthorizationExpiredError,
+    RealWriteAuthorizationInvalidError,
+    RealWriteAuthorizationRepositoryError,
+    RealWriteAuthorizationRequiredError,
+    RealWriteAuthorizationRevokedError,
+)
 from domain.errors.execution_evidence_errors import (
     ExecutionEvidenceContextError,
     ExecutionEvidenceNotFoundError,
@@ -54,6 +66,16 @@ from domain.errors.portal_errors import (
 )
 
 __all__ = [
+    "RealWriteAuthorizationConfirmationError",
+    "RealWriteAuthorizationConsumedError",
+    "RealWriteAuthorizationContextError",
+    "RealWriteAuthorizationDisabledError",
+    "RealWriteAuthorizationError",
+    "RealWriteAuthorizationExpiredError",
+    "RealWriteAuthorizationInvalidError",
+    "RealWriteAuthorizationRepositoryError",
+    "RealWriteAuthorizationRequiredError",
+    "RealWriteAuthorizationRevokedError",
     "ExecutionEvidenceContextError",
     "ExecutionEvidenceNotFoundError",
     "BatchContractExecutionBlockedError",

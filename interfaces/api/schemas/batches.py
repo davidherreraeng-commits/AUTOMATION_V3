@@ -28,6 +28,14 @@ from application.dto.batch_portal_probe import (
 from domain.enums import ExecutionMode
 from domain.models.contract_batch import BatchContract, ContractBatch
 from application.dto.execution_evidence import ContractExecutionEvidence
+from application.dto.real_write_authorization import (
+    IssuedRealWriteAuthorization,
+    RealWriteAuthorization,
+    RealWriteAuthorizationEvent,
+)
+from domain.enums.real_write_authorization_status import (
+    RealWriteAuthorizationStatus,
+)
 
 
 class BatchCreateRequest(BaseModel):
@@ -58,6 +66,11 @@ class BatchContractExecutionRequest(BaseModel):
     confirmation: str = Field(min_length=1, max_length=180)
     execution_id: UUID | None = None
     mode: ExecutionMode = ExecutionMode.DRY_RUN
+    authorization_token: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+    )
 
     @field_validator("confirmation")
     @classmethod
@@ -66,6 +79,159 @@ class BatchContractExecutionRequest(BaseModel):
         if not normalized:
             raise ValueError("La confirmación es obligatoria.")
         return normalized
+
+
+class RealWriteAuthorizationIssueRequest(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=220)
+
+    @field_validator("confirmation")
+    @classmethod
+    def normalize_confirmation(cls, value: str) -> str:
+        normalized = " ".join(str(value).strip().split())
+        if not normalized:
+            raise ValueError("La confirmación es obligatoria.")
+        return normalized
+
+
+class RealWriteAuthorizationEventResponse(BaseModel):
+    event_id: UUID
+    authorization_id: UUID | None
+    event_type: str
+    recorded_at: datetime
+    correlation_id: UUID | None
+    reason: str | None
+    metadata: dict[str, object]
+
+    @classmethod
+    def from_domain(
+        cls,
+        event: RealWriteAuthorizationEvent,
+    ) -> "RealWriteAuthorizationEventResponse":
+        return cls(
+            event_id=event.event_id,
+            authorization_id=event.authorization_id,
+            event_type=event.event_type,
+            recorded_at=event.recorded_at,
+            correlation_id=event.correlation_id,
+            reason=event.reason,
+            metadata=dict(event.metadata),
+        )
+
+
+class RealWriteAuthorizationResponse(BaseModel):
+    batch_id: UUID
+    item_id: UUID
+    contract_number: str
+    dependency: str
+    available: bool
+    authorization_id: UUID | None
+    status: RealWriteAuthorizationStatus | None
+    issued_at: datetime | None
+    expires_at: datetime | None
+    consumed_at: datetime | None
+    consumed_correlation_id: UUID | None
+    revoked_at: datetime | None
+    authorization_token: str | None = None
+    required_execution_confirmation: str | None = None
+    events: list[RealWriteAuthorizationEventResponse] = Field(
+        default_factory=list
+    )
+
+    @classmethod
+    def from_issued(
+        cls,
+        issued: IssuedRealWriteAuthorization,
+    ) -> "RealWriteAuthorizationResponse":
+        authorization = issued.authorization
+        return cls(
+            batch_id=authorization.batch_id,
+            item_id=authorization.item_id,
+            contract_number=authorization.contract_number,
+            dependency=authorization.dependency,
+            available=(
+                authorization.status
+                is RealWriteAuthorizationStatus.ACTIVE
+            ),
+            authorization_id=authorization.authorization_id,
+            status=authorization.status,
+            issued_at=authorization.issued_at,
+            expires_at=authorization.expires_at,
+            consumed_at=authorization.consumed_at,
+            consumed_correlation_id=(
+                authorization.consumed_correlation_id
+            ),
+            revoked_at=authorization.revoked_at,
+            authorization_token=issued.token,
+            required_execution_confirmation=(
+                issued.required_execution_confirmation
+            ),
+            events=[
+                RealWriteAuthorizationEventResponse.from_domain(event)
+                for event in issued.events
+            ],
+        )
+
+    @classmethod
+    def from_status(
+        cls,
+        *,
+        authorization: RealWriteAuthorization | None,
+        events: tuple[RealWriteAuthorizationEvent, ...],
+        batch_id: UUID,
+        item_id: UUID,
+        contract_number: str,
+        dependency: str,
+    ) -> "RealWriteAuthorizationResponse":
+        return cls(
+            batch_id=batch_id,
+            item_id=item_id,
+            contract_number=contract_number,
+            dependency=dependency,
+            available=(
+                authorization is not None
+                and authorization.status
+                is RealWriteAuthorizationStatus.ACTIVE
+            ),
+            authorization_id=(
+                authorization.authorization_id
+                if authorization is not None
+                else None
+            ),
+            status=(
+                authorization.status
+                if authorization is not None
+                else None
+            ),
+            issued_at=(
+                authorization.issued_at
+                if authorization is not None
+                else None
+            ),
+            expires_at=(
+                authorization.expires_at
+                if authorization is not None
+                else None
+            ),
+            consumed_at=(
+                authorization.consumed_at
+                if authorization is not None
+                else None
+            ),
+            consumed_correlation_id=(
+                authorization.consumed_correlation_id
+                if authorization is not None
+                else None
+            ),
+            revoked_at=(
+                authorization.revoked_at
+                if authorization is not None
+                else None
+            ),
+            events=[
+                RealWriteAuthorizationEventResponse.from_domain(event)
+                for event in events
+            ],
+        )
 
 
 class BatchHeaderDraftProbeRequest(BaseModel):
@@ -332,6 +498,13 @@ class BatchContractExecutionPreflightResponse(BaseModel):
     real_write_enabled: bool
     simulation_available: bool
     latest_correlation_id: UUID | None
+    real_write_authorization_required: bool
+    authorization_available: bool
+    authorization_id: UUID | None
+    authorization_status: RealWriteAuthorizationStatus | None
+    authorization_expires_at: datetime | None
+    authorization_required_confirmation: str | None
+    authorization_ttl_seconds: int | None
     batch_status: str
     item_status: str
     required_confirmation: str
@@ -368,6 +541,19 @@ class BatchContractExecutionPreflightResponse(BaseModel):
             real_write_enabled=preflight.real_write_enabled,
             simulation_available=preflight.simulation_available,
             latest_correlation_id=preflight.latest_correlation_id,
+            real_write_authorization_required=(
+                preflight.real_write_authorization_required
+            ),
+            authorization_available=preflight.authorization_available,
+            authorization_id=preflight.authorization_id,
+            authorization_status=preflight.authorization_status,
+            authorization_expires_at=preflight.authorization_expires_at,
+            authorization_required_confirmation=(
+                preflight.authorization_required_confirmation
+            ),
+            authorization_ttl_seconds=(
+                preflight.authorization_ttl_seconds
+            ),
             batch_status=preflight.batch.status.value,
             item_status=preflight.item.status.value,
             required_confirmation=preflight.required_confirmation,
@@ -428,6 +614,8 @@ class BatchContractExecutionResponse(BaseModel):
     writes_to_portal: bool
     correlation_id: UUID | None
     evidence_count: int
+    authorization_id: UUID | None
+    authorization_consumed_at: datetime | None
     batch_status: str
     item_status: str
     required_confirmation: str
@@ -463,6 +651,10 @@ class BatchContractExecutionResponse(BaseModel):
             writes_to_portal=result.writes_to_portal,
             correlation_id=result.correlation_id,
             evidence_count=result.evidence_count,
+            authorization_id=result.authorization_id,
+            authorization_consumed_at=(
+                result.authorization_consumed_at
+            ),
             batch_status=result.batch_status.value,
             item_status=result.item_status.value,
             required_confirmation=result.required_confirmation,
