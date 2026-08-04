@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from adapters.input.excel.upload_validation import ExcelUploadValidator
+from adapters.persistence.sqlite import SQLiteDatabaseBootstrapper
 from adapters.persistence.sqlite.batch_repository import SQLiteBatchRepository
 from adapters.persistence.sqlite.execution_repository import (
     SQLiteExecutionRepository,
@@ -80,32 +81,37 @@ def create_app(
     async def lifespan(app: FastAPI):
         resolved_settings.ensure_runtime_directories()
 
-        users = SQLiteUserRepository(
-            resolved_settings.resolved_database_path
-        )
-        users.initialize()
-
-        portal_credentials = SQLitePortalCredentialRepository(
-            resolved_settings.resolved_database_path
-        )
-        portal_credentials.initialize()
-
-        batches = SQLiteBatchRepository(
-            resolved_settings.resolved_database_path
-        )
-        batches.initialize()
-
+        database_path = resolved_settings.resolved_database_path
+        users = SQLiteUserRepository(database_path)
+        portal_credentials = SQLitePortalCredentialRepository(database_path)
+        batches = SQLiteBatchRepository(database_path)
         executions = SQLiteExecutionRepository(
-            resolved_settings.resolved_database_path
+            database_path,
+            auto_initialize=False,
         )
-        checkpoints = ExecutionCheckpointService(executions)
-
         real_write_authorizations = (
-            SQLiteRealWriteAuthorizationRepository(
-                resolved_settings.resolved_database_path
+            SQLiteRealWriteAuthorizationRepository(database_path)
+        )
+
+        database_bootstrapper = SQLiteDatabaseBootstrapper(
+            database_path,
+            backup_directory=(
+                resolved_settings.resolved_database_backup_directory
+            ),
+            backup_before_migration=(
+                resolved_settings.database_backup_before_migration
+            ),
+        )
+        database_bootstrap_report = database_bootstrapper.initialize(
+            (
+                users.initialize,
+                portal_credentials.initialize,
+                batches.initialize,
+                executions.initialize,
+                real_write_authorizations.initialize,
             )
         )
-        real_write_authorizations.initialize()
+        checkpoints = ExecutionCheckpointService(executions)
 
         file_validator = contract_file_validator or ExcelUploadValidator(
             upload_directory=resolved_settings.resolved_upload_directory,
@@ -141,6 +147,8 @@ def create_app(
             )
 
         app.state.settings = resolved_settings
+        app.state.database_bootstrapper = database_bootstrapper
+        app.state.database_bootstrap_report = database_bootstrap_report
         app.state.user_repository = users
         app.state.portal_credential_repository = portal_credentials
         app.state.batch_repository = batches

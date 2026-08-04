@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
 
     database_path: Path = Path("data/rpa.sqlite3")
+    database_backup_directory: Path = Path("data/database_backups")
+    database_backup_before_migration: bool = True
     upload_directory: Path = Path("data/uploads")
     upload_max_bytes: int = Field(
         default=10 * 1024 * 1024,
@@ -144,6 +146,10 @@ class Settings(BaseSettings):
         return self._resolve_project_path(self.database_path)
 
     @cached_property
+    def resolved_database_backup_directory(self) -> Path:
+        return self._resolve_project_path(self.database_backup_directory)
+
+    @cached_property
     def resolved_upload_directory(self) -> Path:
         return self._resolve_project_path(self.upload_directory)
 
@@ -156,4 +162,8 @@ class Settings(BaseSettings):
 
     def ensure_runtime_directories(self) -> None:
         self.resolved_database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.resolved_database_backup_directory.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
         self.resolved_upload_directory.mkdir(parents=True, exist_ok=True)
