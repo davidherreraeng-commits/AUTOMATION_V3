@@ -1,0 +1,13 @@
+{
+  "validation_id": "3d95dfd2d0354608af5b11122ceb7887",
+  "original_file_name": "PRUEBA_GT.xlsx",
+  "stored_file_name": "contracts.xlsx",
+  "dependency": "Adquisiciones",
+  "sheet_name": null,
+  "validated_at": "2026-08-02T04:07:13.318710+00:00",
+  "total_rows": 1,
+  "valid_count": 1,
+  "invalid_count": 0,
+  "fully_valid": true,
+  "can_create_batch": true
+}

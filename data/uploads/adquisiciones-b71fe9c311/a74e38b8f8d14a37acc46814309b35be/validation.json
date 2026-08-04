@@ -1,0 +1,13 @@
+{
+  "validation_id": "a74e38b8f8d14a37acc46814309b35be",
+  "original_file_name": "Base de Datos G.T BOT.xlsx PRUEBA 2026.xlsx",
+  "stored_file_name": "contracts.xlsx",
+  "dependency": "Adquisiciones",
+  "sheet_name": null,
+  "validated_at": "2026-07-30T23:29:09.218994+00:00",
+  "total_rows": 8,
+  "valid_count": 8,
+  "invalid_count": 0,
+  "fully_valid": true,
+  "can_create_batch": true
+}

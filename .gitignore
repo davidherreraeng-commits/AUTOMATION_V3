@@ -1,0 +1,33 @@
+# Entorno virtual
+.venv/
+venv/
+
+# Variables y credenciales
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs y temporales
+*.log
+logs/
+temp/
+tmp/
+
+# Evidencias y archivos sensibles
+evidence/
+screenshots/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+artifacts/
