@@ -33,3 +33,7 @@ Thumbs.db
 artifacts/
 
 .backups/
+
+# Datos operativos generados localmente
+data/execution_evidence/
+data/uploads/
