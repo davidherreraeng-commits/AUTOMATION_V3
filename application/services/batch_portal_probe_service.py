@@ -287,11 +287,18 @@ class BatchPortalProbeService:
         item_id: UUID,
         dependency: str,
     ) -> BatchGeneralDataDraftProbeOutcome:
-        """Completa C3 para un contrato sin validar ni guardar."""
+        """Completa C3 para un contrato sin validar ni guardar.
+
+        Este diagnóstico también está permitido sobre el mismo lote
+        ``PROCESSING`` cuando se investiga una reanudación. No consume el
+        plan institucional, no emite autorización y se detiene antes de la
+        validación general y de Guardar.
+        """
 
         batch, credential, portal_password = self._prepare_probe(
             batch_id=batch_id,
             dependency=dependency,
+            allow_processing=True,
         )
 
         item = next(

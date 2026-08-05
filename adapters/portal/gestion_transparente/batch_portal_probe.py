@@ -5134,6 +5134,7 @@ class SeleniumBatchPortalProbe:
                 "code": "GENERAL_PROCESS_TYPE_SELECTION_FAILED",
                 "label": "Modalidad o Proceso",
                 "allow_decorated_value": False,
+                "require_committed_state": False,
                 "flag": "process_type_selected",
             },
             {
@@ -5142,6 +5143,7 @@ class SeleniumBatchPortalProbe:
                 "code": "GENERAL_CONTRACT_TYPE_SELECTION_FAILED",
                 "label": "Tipo de Contrato",
                 "allow_decorated_value": False,
+                "require_committed_state": False,
                 "flag": "contract_type_selected",
             },
             {
@@ -5150,6 +5152,7 @@ class SeleniumBatchPortalProbe:
                 "code": "GENERAL_PROCEDURE_SELECTION_FAILED",
                 "label": "Procedimiento o Causal",
                 "allow_decorated_value": True,
+                "require_committed_state": True,
                 "flag": "procedure_selected",
             },
         )
@@ -5157,12 +5160,16 @@ class SeleniumBatchPortalProbe:
 
         for cycle in range(1, 4):
             for specification in specifications:
-                if self._resolved_autocomplete_matches(
+                if self._autocomplete_selection_confirmed(
                     resolver=resolver,
                     key=str(specification["key"]),
                     expected=str(specification["expected"]),
                     allow_decorated_value=bool(
                         specification["allow_decorated_value"]
+                    ),
+                    alternative_clickable_key=None,
+                    require_committed_state=bool(
+                        specification["require_committed_state"]
                     ),
                 ):
                     continue
@@ -5177,6 +5184,9 @@ class SeleniumBatchPortalProbe:
                     label=str(specification["label"]),
                     allow_decorated_value=bool(
                         specification["allow_decorated_value"]
+                    ),
+                    require_committed_state=bool(
+                        specification["require_committed_state"]
                     ),
                 )
 
@@ -5197,12 +5207,16 @@ class SeleniumBatchPortalProbe:
             )
 
             if all(
-                self._resolved_autocomplete_matches(
+                self._autocomplete_selection_confirmed(
                     resolver=resolver,
                     key=str(specification["key"]),
                     expected=str(specification["expected"]),
                     allow_decorated_value=bool(
                         specification["allow_decorated_value"]
+                    ),
+                    alternative_clickable_key=None,
+                    require_committed_state=bool(
+                        specification["require_committed_state"]
                     ),
                 )
                 for specification in specifications
@@ -6333,27 +6347,104 @@ class SeleniumBatchPortalProbe:
         label: str,
         allow_decorated_value: bool = False,
         alternative_clickable_key: str | None = None,
+        require_committed_state: bool = False,
     ) -> None:
-        """Selecciona un catálogo MUI y confirma su postcondición real.
+        """Selecciona un catálogo MUI y confirma el estado de React.
 
-        Los controles del portal mezclan inputs de Autocomplete y divs de
-        Select. El teclado por sí solo es inestable: puede abrir la lista sin
-        confirmar una opción. Por eso se prioriza el clic explícito sobre el
-        elemento visible con role=option y se conserva el teclado únicamente
-        como fallback.
+        ``WebElement.click()`` puede finalizar sin excepción aunque Material UI
+        no actualice el objeto seleccionado del formulario. Por eso cada modo
+        de clic se valida por su postcondición y, si no la cumple, se intenta
+        el siguiente modo con una opción recién resuelta. La selección debe
+        permanecer estable durante varias consultas después del blur.
         """
 
         errors: list[str] = []
+        click_modes = ("actions", "native", "javascript")
 
-        for attempt in range(1, 7):
-            if self._autocomplete_selection_confirmed(
+        for attempt in range(1, 5):
+            if self._wait_for_stable_autocomplete_selection(
+                waits=waits,
                 resolver=resolver,
                 key=key,
                 expected=expected,
                 allow_decorated_value=allow_decorated_value,
                 alternative_clickable_key=alternative_clickable_key,
+                require_committed_state=require_committed_state,
+                timeout_seconds=min(1.5, self._timeout_seconds),
+                required_polls=3,
+                raise_on_timeout=False,
             ):
                 return
+
+            for mode in click_modes:
+                element = self._resolve_catalog_clickable_or_capture(
+                    driver=driver,
+                    resolver=resolver,
+                    key=key,
+                    expected=expected,
+                    code=code,
+                    label=label,
+                    attempts=errors,
+                )
+                self._scroll_into_view(driver, element)
+
+                try:
+                    self._open_catalog_control(
+                        element=element,
+                        expected=expected,
+                    )
+                    selected_option = (
+                        self._click_visible_catalog_option(
+                            driver=driver,
+                            waits=waits,
+                            expected=expected,
+                            allow_decorated_value=allow_decorated_value,
+                            control=element,
+                            mode=mode,
+                        )
+                        or ""
+                    )
+                except WebDriverException as error:
+                    errors.append(
+                        f"intento {attempt}/{mode}: "
+                        f"{type(error).__name__}"
+                    )
+                    continue
+
+                if not selected_option:
+                    errors.append(
+                        f"intento {attempt}/{mode}: opción no encontrada"
+                    )
+                    continue
+
+                self._blur_catalog_control(
+                    resolver=resolver,
+                    key=key,
+                )
+
+                if self._wait_for_stable_autocomplete_selection(
+                    waits=waits,
+                    resolver=resolver,
+                    key=key,
+                    expected=expected,
+                    allow_decorated_value=allow_decorated_value,
+                    alternative_clickable_key=alternative_clickable_key,
+                    require_committed_state=require_committed_state,
+                    timeout_seconds=min(4.0, self._timeout_seconds),
+                    required_polls=5,
+                    raise_on_timeout=False,
+                ):
+                    return
+
+                actual = self._resolved_autocomplete_value(
+                    resolver=resolver,
+                    key=key,
+                )
+                errors.append(
+                    "intento "
+                    f"{attempt}/{mode}: opción={selected_option!r}, "
+                    f"valor no estable={actual!r}"
+                )
 
             element = self._resolve_catalog_clickable_or_capture(
                 driver=driver,
@@ -6365,70 +6456,47 @@ class SeleniumBatchPortalProbe:
                 attempts=errors,
             )
             self._scroll_into_view(driver, element)
-
-            selected_option = ""
             try:
                 self._open_catalog_control(
                     element=element,
                     expected=expected,
                 )
-                selected_option = (
-                    self._click_visible_catalog_option(
-                        driver=driver,
-                        waits=waits,
-                        expected=expected,
-                        allow_decorated_value=allow_decorated_value,
-                        control=element,
-                    )
-                    or ""
+                keyboard_selected = self._select_catalog_with_keyboard(
+                    driver=driver,
+                    resolver=resolver,
+                    key=key,
+                    expected=expected,
+                    allow_decorated_value=allow_decorated_value,
+                    control=element,
                 )
-
-                if not selected_option:
-                    # Nunca confirme a ciegas la primera opción del catálogo.
-                    # El fallback de teclado solo pulsa Enter cuando la opción
-                    # activa pertenece al control objetivo y coincide con el
-                    # valor esperado.
-                    self._select_catalog_with_keyboard(
-                        driver=driver,
-                        resolver=resolver,
-                        key=key,
-                        expected=expected,
-                        allow_decorated_value=allow_decorated_value,
-                        control=element,
-                    )
-                else:
-                    self._blur_catalog_control(
-                        resolver=resolver,
-                        key=key,
-                    )
             except WebDriverException as error:
                 errors.append(
-                    f"intento {attempt}: {type(error).__name__}"
+                    f"intento {attempt}/keyboard: "
+                    f"{type(error).__name__}"
                 )
                 continue
 
-            try:
-                waits.until(
-                    lambda _driver: self._autocomplete_selection_confirmed(
-                        resolver=resolver,
-                        key=key,
-                        expected=expected,
-                        allow_decorated_value=allow_decorated_value,
-                        alternative_clickable_key=alternative_clickable_key,
-                    ),
-                    timeout_seconds=min(4.0, self._timeout_seconds),
-                )
+            if keyboard_selected and self._wait_for_stable_autocomplete_selection(
+                waits=waits,
+                resolver=resolver,
+                key=key,
+                expected=expected,
+                allow_decorated_value=allow_decorated_value,
+                alternative_clickable_key=alternative_clickable_key,
+                require_committed_state=require_committed_state,
+                timeout_seconds=min(4.0, self._timeout_seconds),
+                required_polls=5,
+                raise_on_timeout=False,
+            ):
                 return
-            except TimeoutException:
-                actual = self._resolved_autocomplete_value(
-                    resolver=resolver,
-                    key=key,
-                )
-                errors.append(
-                    "intento "
-                    f"{attempt}: opción={selected_option!r}, "
-                    f"valor confirmado={actual!r}"
-                )
+
+            actual = self._resolved_autocomplete_value(
+                resolver=resolver,
+                key=key,
+            )
+            errors.append(
+                f"intento {attempt}/keyboard: valor no estable={actual!r}"
+            )
 
         evidence_directory = self._capture_catalog_failure_evidence(
             driver=driver,
@@ -6450,6 +6518,51 @@ class SeleniumBatchPortalProbe:
                 "evidence_directory": evidence_directory,
             },
         )
+
+    def _wait_for_stable_autocomplete_selection(
+        self,
+        *,
+        waits: SeleniumWaits,
+        resolver: ElementResolver,
+        key: str,
+        expected: str,
+        allow_decorated_value: bool,
+        alternative_clickable_key: str | None,
+        require_committed_state: bool = False,
+        timeout_seconds: float = 4.0,
+        required_polls: int = 5,
+        raise_on_timeout: bool = False,
+    ) -> bool:
+        """Exige una selección estable, no solo texto transitorio del input."""
+
+        consecutive_matches = 0
+
+        def stable(_driver: WebDriver) -> bool:
+            nonlocal consecutive_matches
+            confirmed = self._autocomplete_selection_confirmed(
+                resolver=resolver,
+                key=key,
+                expected=expected,
+                allow_decorated_value=allow_decorated_value,
+                alternative_clickable_key=alternative_clickable_key,
+                require_committed_state=require_committed_state,
+            )
+            if confirmed:
+                consecutive_matches += 1
+            else:
+                consecutive_matches = 0
+            return consecutive_matches >= required_polls
+
+        try:
+            waits.until(
+                stable,
+                timeout_seconds=timeout_seconds,
+            )
+            return True
+        except TimeoutException:
+            if raise_on_timeout:
+                raise
+            return False
 
     def _resolve_catalog_clickable_or_capture(
         self,
@@ -6763,6 +6876,7 @@ class SeleniumBatchPortalProbe:
         allow_decorated_value: bool,
         first_visible: bool = False,
         control: WebElement | None = None,
+        mode: str = "native",
     ) -> str | None:
         """Pulsa una opción visible del listbox Material UI.
 
@@ -6801,36 +6915,22 @@ class SeleniumBatchPortalProbe:
                     return option
             return False
 
-        click_errors: list[str] = []
-        for mode in ("native", "actions", "javascript"):
-            try:
-                option = waits.until(
-                    locate_option,
-                    timeout_seconds=min(3.0, self._timeout_seconds),
-                )
-            except TimeoutException:
-                return None
-
-            option_text = self._catalog_option_text(option)
-            self._scroll_into_view(driver, option)
-            try:
-                self._perform_click(
-                    driver=driver,
-                    element=option,
-                    mode=mode,
-                )
-                return option_text
-            except WebDriverException as error:
-                click_errors.append(
-                    f"{mode}: {type(error).__name__}"
-                )
-
-        if click_errors:
-            raise WebDriverException(
-                "No fue posible pulsar la opción del catálogo: "
-                + "; ".join(click_errors)
+        try:
+            option = waits.until(
+                locate_option,
+                timeout_seconds=min(3.0, self._timeout_seconds),
             )
-        return None
+        except TimeoutException:
+            return None
+
+        option_text = self._catalog_option_text(option)
+        self._scroll_into_view(driver, option)
+        self._perform_click(
+            driver=driver,
+            element=option,
+            mode=mode,
+        )
+        return option_text
 
     @staticmethod
     def _catalog_options_for_control(
@@ -6995,6 +7095,7 @@ class SeleniumBatchPortalProbe:
         expected: str,
         allow_decorated_value: bool,
         alternative_clickable_key: str | None,
+        require_committed_state: bool = False,
     ) -> bool:
         """Confirma exclusivamente el valor del control seleccionado.
 
@@ -7005,12 +7106,77 @@ class SeleniumBatchPortalProbe:
         esperan por separado después de confirmar el valor real.
         """
 
-        return self._resolved_autocomplete_matches(
+        value_matches = self._resolved_autocomplete_matches(
             resolver=resolver,
             key=key,
             expected=expected,
             allow_decorated_value=allow_decorated_value,
         )
+        if not value_matches:
+            return False
+        if not require_committed_state:
+            return True
+        return self._mui_autocomplete_selection_is_committed(
+            resolver=resolver,
+            key=key,
+        )
+
+    def _mui_autocomplete_selection_is_committed(
+        self,
+        *,
+        resolver: ElementResolver,
+        key: str,
+    ) -> bool:
+        """Comprueba que Material UI conserva un objeto seleccionado.
+
+        El texto del ``input`` puede coincidir aunque React mantenga el valor
+        interno en ``null``. En el portal, una selección real cierra el popup y
+        monta ``MuiAutocomplete-hasClearIcon`` junto con el botón Clear.
+        """
+
+        try:
+            current = resolver.visible(
+                key,
+                timeout_seconds=min(0.75, self._timeout_seconds),
+            )
+            expanded = str(
+                current.get_attribute("aria-expanded") or ""
+            ).strip().casefold()
+            if expanded == "true":
+                return False
+            if str(
+                current.get_attribute("aria-invalid") or ""
+            ).strip().casefold() == "true":
+                return False
+
+            roots = current.find_elements(
+                By.XPATH,
+                "./ancestor::div[contains(concat(' ', "
+                "normalize-space(@class), ' '), "
+                "' MuiAutocomplete-root ')][1]",
+            )
+            if not roots:
+                return False
+
+            root = roots[0]
+            root_class = str(
+                root.get_attribute("class") or ""
+            )
+            if "MuiAutocomplete-hasClearIcon" not in root_class:
+                return False
+            if "Mui-expanded" in root_class:
+                return False
+
+            clear_buttons = root.find_elements(
+                By.CSS_SELECTOR,
+                "button.MuiAutocomplete-clearIndicator",
+            )
+            return any(
+                button.is_displayed() and button.is_enabled()
+                for button in clear_buttons
+            )
+        except Exception:
+            return False
 
     def _resolved_clickable_available(
         self,

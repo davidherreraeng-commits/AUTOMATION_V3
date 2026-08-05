@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+from selenium.webdriver.common.by import By
+
 from adapters.portal.gestion_transparente.batch_portal_probe import (
     SeleniumBatchPortalProbe,
 )
@@ -15,10 +17,45 @@ from domain.models import BudgetData, ContractData, ContractorData, SupervisorDa
 
 
 @dataclass
+class FakeClearButton:
+    def is_displayed(self) -> bool:
+        return True
+
+    def is_enabled(self) -> bool:
+        return True
+
+
+class FakeAutocompleteRoot:
+    def __init__(self, control: "FakeElement") -> None:
+        self.control = control
+
+    def get_attribute(self, name: str):
+        if name == "class":
+            classes = ["MuiAutocomplete-root"]
+            if self.control.committed:
+                classes.append("MuiAutocomplete-hasClearIcon")
+            if self.control.expanded:
+                classes.append("Mui-expanded")
+            return " ".join(classes)
+        return None
+
+    def find_elements(self, by, value):
+        if (
+            by == By.CSS_SELECTOR
+            and value == "button.MuiAutocomplete-clearIndicator"
+            and self.control.committed
+        ):
+            return [FakeClearButton()]
+        return []
+
+
+@dataclass
 class FakeElement:
     value: str = ""
     text: str = ""
     selected: bool = False
+    committed: bool = False
+    expanded: bool = False
 
     def click(self) -> None:
         self.selected = True
@@ -36,7 +73,16 @@ class FakeElement:
     def get_attribute(self, name: str):
         if name == "value":
             return self.value
+        if name == "aria-expanded":
+            return "true" if self.expanded else "false"
+        if name == "aria-invalid":
+            return "false"
         return None
+
+    def find_elements(self, by, value):
+        if by == By.XPATH and "MuiAutocomplete-root" in value:
+            return [FakeAutocompleteRoot(self)]
+        return []
 
     def is_selected(self) -> bool:
         return self.selected
@@ -149,10 +195,13 @@ def test_should_populate_all_general_fields_without_validation_or_save() -> None
     def select_autocomplete(**kwargs) -> None:
         calls.append((kwargs["key"], kwargs["expected"]))
         selection_calls.append(dict(kwargs))
-        resolver.elements.setdefault(
+        element = resolver.elements.setdefault(
             kwargs["key"],
             FakeElement(),
-        ).value = kwargs["expected"]
+        )
+        element.value = kwargs["expected"]
+        if kwargs["key"] == "general.typology":
+            element.committed = True
 
     subject._select_autocomplete_and_confirm = (  # type: ignore[method-assign]
         select_autocomplete
@@ -194,6 +243,7 @@ def test_should_populate_all_general_fields_without_validation_or_save() -> None
         if call["key"] == "general.typology"
     )
     assert typology_call["allow_decorated_value"] is True
+    assert typology_call["require_committed_state"] is True
 
 
 def test_should_select_procedure_after_contract_type_repopulates_catalog() -> None:
@@ -204,9 +254,10 @@ def test_should_select_procedure_after_contract_type_repopulates_catalog() -> No
     def select_autocomplete(**kwargs) -> None:
         key = kwargs["key"]
         calls.append(key)
-        resolver.elements.setdefault(key, FakeElement()).value = kwargs[
-            "expected"
-        ]
+        element = resolver.elements.setdefault(key, FakeElement())
+        element.value = kwargs["expected"]
+        if key == "general.typology":
+            element.committed = True
         if key == "general.contract_type":
             # Comportamiento observado en Gestión Transparente: al elegir el
             # tipo, React repuebla y limpia Procedimiento / Causal.

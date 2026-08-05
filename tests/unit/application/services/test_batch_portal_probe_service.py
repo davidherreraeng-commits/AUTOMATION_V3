@@ -11,7 +11,10 @@ from adapters.persistence.sqlite.batch_repository import SQLiteBatchRepository
 from adapters.persistence.sqlite.portal_credential_repository import (
     SQLitePortalCredentialRepository,
 )
-from application.ports.batch_portal_probe import BatchPortalProbeResult
+from application.ports.batch_portal_probe import (
+    BatchGeneralDataDraftProbeResult,
+    BatchPortalProbeResult,
+)
 from application.services.batch_portal_probe_service import (
     BatchPortalProbeService,
 )
@@ -56,6 +59,39 @@ class FakeProbe:
             enter_contract_found=True,
             assistant_access_found=True,
             duration_ms=1250,
+        )
+
+    def probe_general_data_draft(
+        self,
+        *,
+        portal_username: str,
+        portal_password: str,
+        contract: ContractData,
+    ) -> BatchGeneralDataDraftProbeResult:
+        self.username = portal_username
+        self.password = portal_password
+        return BatchGeneralDataDraftProbeResult(
+            success=True,
+            code="GENERAL_DATA_DRAFT_READY",
+            message="C5 confirmado sin validar ni guardar.",
+            authenticated=True,
+            assistant_opened=True,
+            header_validation_confirmed=True,
+            object_written=True,
+            signing_date_written=True,
+            starting_date_written=True,
+            amount_written=True,
+            amount_in_words_generated=True,
+            contract_term_written=True,
+            term_unit_days_selected=True,
+            process_type_selected=True,
+            procedure_selected=True,
+            contract_type_selected=True,
+            other_currency_no_selected=True,
+            general_data_completed=True,
+            general_validate_clicked=False,
+            save_clicked=False,
+            duration_ms=900,
         )
 
 
@@ -209,6 +245,33 @@ def test_should_allow_processing_batch_for_supervised_diagnostic(
 
     assert outcome.success is True
     assert outcome.batch_id == batch.batch_id
+
+
+def test_general_data_draft_should_allow_processing_batch_without_writes(
+    tmp_path: Path,
+) -> None:
+    batches, credentials = repositories(tmp_path)
+    batch = create_batch(batches, status=BatchStatus.PROCESSING)
+    configure_credentials(credentials)
+    probe = FakeProbe()
+    service = BatchPortalProbeService(
+        batches=batches,
+        credentials=credentials,
+        cipher=FakeCipher(),
+        probe=probe,
+    )
+
+    outcome = service.run_general_data_draft(
+        batch_id=batch.batch_id,
+        item_id=batch.contracts[0].item_id,
+        dependency="Adquisiciones",
+    )
+
+    assert outcome.success is True
+    assert outcome.code == "GENERAL_DATA_DRAFT_READY"
+    assert outcome.procedure_selected is True
+    assert outcome.general_validate_clicked is False
+    assert outcome.save_clicked is False
 
 
 def test_should_reject_processing_batch_without_explicit_permission(

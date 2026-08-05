@@ -47,6 +47,38 @@ class FakeOption:
             self.on_click()
 
 
+class FakeClearButton:
+    def is_displayed(self) -> bool:
+        return True
+
+    def is_enabled(self) -> bool:
+        return True
+
+
+class FakeAutocompleteRoot:
+    def __init__(self, control: "FakeControl") -> None:
+        self.control = control
+
+    def get_attribute(self, name: str):
+        if name == "class":
+            classes = ["MuiAutocomplete-root"]
+            if self.control.committed:
+                classes.append("MuiAutocomplete-hasClearIcon")
+            if self.control.expanded:
+                classes.append("Mui-expanded")
+            return " ".join(classes)
+        return None
+
+    def find_elements(self, by, value):
+        if (
+            by == By.CSS_SELECTOR
+            and value == "button.MuiAutocomplete-clearIndicator"
+            and self.control.committed
+        ):
+            return [FakeClearButton()]
+        return []
+
+
 class FakeControl:
     def __init__(
         self,
@@ -56,12 +88,16 @@ class FakeControl:
         text: str = "",
         aria_controls: str = "catalog-listbox",
         active_descendant: str | None = None,
+        committed: bool = False,
+        expanded: bool = False,
     ) -> None:
         self.tag_name = tag_name
         self.value = value
         self.text = text
         self.aria_controls = aria_controls
         self.active_descendant = active_descendant
+        self.committed = committed
+        self.expanded = expanded
         self.clicks = 0
         self.sent: list[object] = []
         self._selected_all = False
@@ -80,7 +116,16 @@ class FakeControl:
             return self.aria_controls
         if name == "aria-activedescendant":
             return self.active_descendant
+        if name == "aria-expanded":
+            return "true" if self.expanded else "false"
+        if name == "aria-invalid":
+            return "false"
         return None
+
+    def find_elements(self, by, value):
+        if by == By.XPATH and "MuiAutocomplete-root" in value:
+            return [FakeAutocompleteRoot(self)]
+        return []
 
     def send_keys(self, *values) -> None:
         self.sent.extend(values)
@@ -144,9 +189,10 @@ class FakeDriver:
 
 class FakeWaits:
     def until(self, condition, **kwargs):
-        result = condition(kwargs.get("driver") or self.driver)
-        if result:
-            return result
+        for _ in range(12):
+            result = condition(kwargs.get("driver") or self.driver)
+            if result:
+                return result
         raise TimeoutException("condition not met")
 
     def __init__(self, driver) -> None:
@@ -397,3 +443,117 @@ def test_keyboard_fallback_accepts_matching_decorated_option() -> None:
     assert selected is True
     assert Keys.ENTER in control.sent
     assert Keys.TAB in control.sent
+
+def test_catalog_retries_pointer_modes_when_click_does_not_commit() -> None:
+    subject = probe()
+    control = FakeControl()
+    option = FakeOption("Sin Pluralidad de Oferentes")
+    driver = FakeDriver([option])
+    modes: list[str] = []
+
+    subject._scroll_into_view = lambda *args, **kwargs: None  # type: ignore[method-assign]
+
+    def perform_click(**kwargs) -> None:
+        mode = kwargs["mode"]
+        modes.append(mode)
+        if mode == "actions":
+            # Simula un clic que escribe texto, pero no compromete el objeto
+            # seleccionado de Material UI.
+            control.value = "Sin Pluralidad de Oferentes"
+            control.committed = False
+        if mode == "native":
+            control.value = "Sin Pluralidad de Oferentes"
+            control.committed = True
+
+    subject._perform_click = perform_click  # type: ignore[method-assign]
+
+    subject._select_autocomplete_and_confirm(
+        driver=driver,
+        waits=FakeWaits(driver),
+        resolver=FakeResolver(control),
+        key="general.typology",
+        expected="Sin Pluralidad de Oferentes",
+        code="GENERAL_PROCEDURE_SELECTION_FAILED",
+        label="Procedimiento o Causal",
+        allow_decorated_value=True,
+        require_committed_state=True,
+    )
+
+    assert modes[:2] == ["actions", "native"]
+    assert control.value == "Sin Pluralidad de Oferentes"
+
+
+def test_stable_confirmation_rejects_transient_input_text() -> None:
+    subject = probe()
+    control = FakeControl(value="Sin Pluralidad de Oferentes")
+    driver = FakeDriver([])
+    resolver = FakeResolver(control)
+    reads = 0
+
+    original = subject._autocomplete_selection_confirmed
+
+    def transient(**kwargs) -> bool:
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            control.value = ""
+        return original(**kwargs)
+
+    subject._autocomplete_selection_confirmed = transient  # type: ignore[method-assign]
+
+    confirmed = subject._wait_for_stable_autocomplete_selection(
+        waits=FakeWaits(driver),
+        resolver=resolver,
+        key="general.typology",
+        expected="Sin Pluralidad de Oferentes",
+        allow_decorated_value=True,
+        alternative_clickable_key=None,
+        timeout_seconds=2.0,
+        required_polls=3,
+        raise_on_timeout=False,
+    )
+
+    assert confirmed is False
+    assert control.value == ""
+
+def test_typology_requires_material_ui_committed_state() -> None:
+    subject = probe()
+    control = FakeControl(
+        value="Sin Pluralidad de Oferentes",
+        committed=False,
+    )
+    resolver = FakeResolver(control)
+
+    assert subject._autocomplete_selection_confirmed(
+        resolver=resolver,
+        key="general.typology",
+        expected="Sin Pluralidad de Oferentes",
+        allow_decorated_value=True,
+        alternative_clickable_key=None,
+        require_committed_state=True,
+    ) is False
+
+    control.committed = True
+
+    assert subject._autocomplete_selection_confirmed(
+        resolver=resolver,
+        key="general.typology",
+        expected="Sin Pluralidad de Oferentes",
+        allow_decorated_value=True,
+        alternative_clickable_key=None,
+        require_committed_state=True,
+    ) is True
+
+
+def test_committed_state_rejects_open_popup() -> None:
+    subject = probe()
+    control = FakeControl(
+        value="Sin Pluralidad de Oferentes",
+        committed=True,
+        expanded=True,
+    )
+
+    assert subject._mui_autocomplete_selection_is_committed(
+        resolver=FakeResolver(control),
+        key="general.typology",
+    ) is False
