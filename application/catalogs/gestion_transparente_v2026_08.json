@@ -1,0 +1,73 @@
+{
+  "version": "2026_08",
+  "source": "ERRORES FRECUENTES GESTIÓN TRANSPARENTE y confirmación visual del portal",
+  "fields": {
+    "process_type": {
+      "label": "Modalidad o Proceso",
+      "values": [
+        "Licitación",
+        "Selección Abreviada",
+        "Concurso de Meritos",
+        "Contratacion Directa",
+        "Minima Cuantia",
+        "Regimen especial"
+      ],
+      "aliases": {
+        "Contratación Directa": "Contratacion Directa",
+        "Concurso de Méritos": "Concurso de Meritos",
+        "Mínima Cuantía": "Minima Cuantia",
+        "Régimen especial": "Regimen especial"
+      }
+    },
+    "procedure": {
+      "label": "Procedimiento/Causal",
+      "values": [
+        "Arrendamiento y Adquiscion de Inmuebles",
+        "Contrato Interadministrativo",
+        "Contrato de Emprestitos",
+        "Contratos Para El Desarrollo De La Actividad Cientifica Y Tecnologica",
+        "Convenio Interadministrativo",
+        "Obra Publica",
+        "Prestación De Servicios Contratación Directa",
+        "Sin Pluraridad de Oferentes",
+        "Suministros Contratación Directa",
+        "Urgencia Manifiesta"
+      ],
+      "aliases": {
+        "Arrendamiento y Adquisicion de Inmuebles": "Arrendamiento y Adquiscion de Inmuebles",
+        "Arrendamiento y Adquisición de Inmuebles": "Arrendamiento y Adquiscion de Inmuebles",
+        "Contrato de Emprestito": "Contrato de Emprestitos",
+        "Contrato de Empréstitos": "Contrato de Emprestitos",
+        "Contratos Para El Desarrollo De La Actividad Científica Y Tecnológica": "Contratos Para El Desarrollo De La Actividad Cientifica Y Tecnologica",
+        "Obra Pública": "Obra Publica",
+        "Prestacion de Servicios Contratacion Directa": "Prestación De Servicios Contratación Directa",
+        "Prestación de Servicios": "Prestación De Servicios Contratación Directa",
+        "Sin Pluralidad de Oferentes": "Sin Pluraridad de Oferentes",
+        "Sin Pluralidad De Oferentes": "Sin Pluraridad de Oferentes",
+        "Sin Pluraridad De Oferentes": "Sin Pluraridad de Oferentes",
+        "Suministros Contratacion Directa": "Suministros Contratación Directa"
+      }
+    },
+    "contract_type": {
+      "label": "Tipo de Contrato",
+      "values": [
+        "Atípicos",
+        "Compraventa",
+        "Con Valor Cero (Indeterminado)",
+        "Contrato de Concesión",
+        "Contrato de Consultoría",
+        "Contrato de Obra",
+        "Contrato de Prestación de Servicios",
+        "Convenios",
+        "Derivados de la Autonomía de la Voluntad",
+        "Encargos Fiduciarios",
+        "Fiducia Pública",
+        "Suministro",
+        "Típicos"
+      ],
+      "aliases": {
+        "Servicios": "Contrato de Prestación de Servicios"
+      }
+    }
+  }
+}

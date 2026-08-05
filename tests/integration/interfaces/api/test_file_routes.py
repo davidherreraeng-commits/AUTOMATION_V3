@@ -151,6 +151,15 @@ def test_authenticated_user_should_validate_excel_in_own_dependency(
         assert payload["invalid_count"] == 0
         assert payload["can_create_batch"] is True
         assert payload["valid_rows"][0]["dependency"] == "Adquisiciones"
+        assert payload["valid_rows"][0]["process_type"] == (
+            "Contratacion Directa"
+        )
+        assert payload["valid_rows"][0]["procedure"] == (
+            "Prestación De Servicios Contratación Directa"
+        )
+        assert payload["valid_rows"][0]["contract_type"] == (
+            "Contrato de Prestación de Servicios"
+        )
         assert "stored_file_name" not in payload
         assert "file_path" not in payload
 
@@ -275,3 +284,41 @@ def test_should_report_missing_secop_rp_and_gross_total_as_critical(
         assert {issue["code"] for issue in issues} == {
             "MISSING_CRITICAL_FIELD"
         }
+
+def test_should_reject_unknown_gt_catalog_value_before_batch_creation(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        build_settings(tmp_path),
+        portal_credential_verifier=FakeVerifier(),
+    )
+    invalid_row = list(VALID_ROW)
+    invalid_row[10] = "Causal inexistente"
+
+    with TestClient(app) as client:
+        create_account(
+            app,
+            username="operador_catalogo",
+            dependency="Adquisiciones",
+        )
+        login(client, "operador_catalogo")
+
+        response = client.post(
+            "/api/v1/files/validate",
+            files={
+                "file": (
+                    "contratos.xlsx",
+                    workbook_bytes(rows=[invalid_row]),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["valid_count"] == 0
+        assert payload["invalid_count"] == 1
+        assert payload["can_create_batch"] is False
+        assert payload["invalid_rows"][0]["issues"][0]["code"] == (
+            "PROCEDURE_CATALOG_VALUE_INVALID"
+        )

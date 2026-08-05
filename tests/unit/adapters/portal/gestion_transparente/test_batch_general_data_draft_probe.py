@@ -223,9 +223,15 @@ def test_should_populate_all_general_fields_without_validation_or_save() -> None
     assert resolver.elements["general.contract_term"].value == "180"
     assert ("radio", "general.term_unit_days") in calls
     assert ("radio", "general.other_currency_no") in calls
-    assert ("general.process_type", "Contratación Directa") in calls
-    assert ("general.contract_type", "Servicios") in calls
-    assert ("general.typology", "Prestación de Servicios") in calls
+    assert ("general.process_type", "Contratacion Directa") in calls
+    assert (
+        "general.contract_type",
+        "Contrato de Prestación de Servicios",
+    ) in calls
+    assert (
+        "general.typology",
+        "Prestación De Servicios Contratación Directa",
+    ) in calls
     catalog_keys = [
         key
         for key, _expected in calls
@@ -283,7 +289,7 @@ def test_should_select_procedure_after_contract_type_repopulates_catalog() -> No
         "general.typology",
     ]
     assert resolver.elements["general.typology"].value == (
-        "Prestación de Servicios"
+        "Prestación De Servicios Contratación Directa"
     )
     assert flags == {
         "process_type_selected": True,
@@ -313,3 +319,52 @@ def test_general_data_completion_requires_every_postcondition() -> None:
 
 def test_currency_candidates_should_reject_empty_text() -> None:
     assert probe()._currency_candidates("") == set()
+
+def test_should_use_canonical_portal_text_for_persisted_alias() -> None:
+    subject = probe()
+    resolver = FakeResolver()
+    selected: list[tuple[str, str]] = []
+    persisted = contract()
+    persisted = ContractData(
+        contract_number=persisted.contract_number,
+        dependency=persisted.dependency,
+        contractor=persisted.contractor,
+        project_code=persisted.project_code,
+        object_description=persisted.object_description,
+        signing_date=persisted.signing_date,
+        starting_date=persisted.starting_date,
+        amount=persisted.amount,
+        term_days=persisted.term_days,
+        process_type="Contratación Directa",
+        procedure="Sin Pluralidad De Oferentes",
+        contract_type="Servicios",
+        budget=persisted.budget,
+        supervisor=persisted.supervisor,
+        secop_url=persisted.secop_url,
+    )
+
+    def select_autocomplete(**kwargs) -> None:
+        selected.append((kwargs["key"], kwargs["expected"]))
+        element = resolver.elements.setdefault(kwargs["key"], FakeElement())
+        element.value = kwargs["expected"]
+        if kwargs["key"] == "general.typology":
+            element.committed = True
+
+    subject._select_autocomplete_and_confirm = select_autocomplete  # type: ignore[method-assign]
+
+    flags = subject._select_general_classification_catalogs(
+        driver=object(),
+        waits=FakeWaits(),
+        resolver=resolver,
+        contract=persisted,
+    )
+
+    assert flags["procedure_selected"] is True
+    assert selected == [
+        ("general.process_type", "Contratacion Directa"),
+        (
+            "general.contract_type",
+            "Contrato de Prestación de Servicios",
+        ),
+        ("general.typology", "Sin Pluraridad de Oferentes"),
+    ]

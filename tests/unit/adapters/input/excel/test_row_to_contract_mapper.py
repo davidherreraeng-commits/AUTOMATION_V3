@@ -87,6 +87,13 @@ def test_should_map_valid_legal_entity_contract() -> None:
     assert contract.amount == Decimal("1476190")
     assert contract.signing_date == date(2026, 1, 20)
     assert contract.supervisor.supervisor_type == "Interno"
+    assert contract.process_type == "Contratacion Directa"
+    assert contract.procedure == (
+        "Prestación De Servicios Contratación Directa"
+    )
+    assert contract.contract_type == (
+        "Contrato de Prestación de Servicios"
+    )
 
 
 def test_should_map_natural_person() -> None:
@@ -210,3 +217,32 @@ def test_should_force_internal_supervisor_without_excel_column() -> None:
     assert result.is_valid
     assert result.contract is not None
     assert result.contract.supervisor.supervisor_type == "Interno"
+
+def test_should_map_approved_procedure_alias_to_exact_portal_value() -> None:
+    row = build_valid_canonical_row()
+    row[ContractField.PROCEDURE] = "Sin Pluralidad De Oferentes"
+
+    result = create_mapper().map(
+        row_number=2,
+        canonical_row=row,
+    )
+
+    assert result.is_valid
+    assert result.contract is not None
+    assert result.contract.procedure == "Sin Pluraridad de Oferentes"
+
+
+def test_should_reject_unknown_catalog_value_before_selenium() -> None:
+    row = build_valid_canonical_row()
+    row[ContractField.PROCEDURE] = "Causal inexistente"
+
+    result = create_mapper().map(
+        row_number=2,
+        canonical_row=row,
+    )
+
+    assert result.is_invalid
+    assert result.contract is None
+    assert result.issues[0].code == "PROCEDURE_CATALOG_VALUE_INVALID"
+    assert result.issues[0].field == ContractField.PROCEDURE
+    assert result.issues[0].raw_value == "Causal inexistente"

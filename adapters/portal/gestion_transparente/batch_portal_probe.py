@@ -20,6 +20,14 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 
+from application.services.gestion_transparente_catalog import (
+    CONTRACT_TYPE,
+    PROCESS_TYPE,
+    PROCEDURE,
+    CatalogValueNotFoundError,
+    GestionTransparenteCatalog,
+    default_gt_catalog,
+)
 from application.ports.batch_portal_probe import (
     BatchAssistantProbeResult,
     BatchContractSaveProbeResult,
@@ -146,6 +154,7 @@ class SeleniumBatchPortalProbe:
         driver_path: Path | None = None,
         chrome_binary: Path | None = None,
         factory: WebDriverFactory | None = None,
+        gt_catalog: GestionTransparenteCatalog | None = None,
     ) -> None:
         normalized_url = str(login_url).strip()
         if not normalized_url:
@@ -170,6 +179,7 @@ class SeleniumBatchPortalProbe:
                 ),
             )
         )
+        self._gt_catalog = gt_catalog or default_gt_catalog()
         self._lock = Lock()
 
     @property
@@ -5106,6 +5116,32 @@ class SeleniumBatchPortalProbe:
         return flags
 
 
+
+    def _resolve_gt_catalog_value(
+        self,
+        *,
+        field: str,
+        value: str,
+        code: str,
+    ) -> str:
+        try:
+            return self._gt_catalog.resolve(field, value)
+        except CatalogValueNotFoundError as error:
+            raise PortalTimeoutError(
+                (
+                    f"El valor {value!r} no está definido en el catálogo "
+                    f"canónico {self._gt_catalog.label(field)} de Gestión "
+                    "Transparente."
+                ),
+                code=code,
+                metadata={
+                    "catalog_version": self._gt_catalog.version,
+                    "catalog_field": field,
+                    "received_value": value,
+                    "allowed_values": list(error.allowed_values),
+                },
+            ) from error
+
     def _select_general_classification_catalogs(
         self,
         *,
@@ -5127,10 +5163,26 @@ class SeleniumBatchPortalProbe:
         se marque como completo con alguno de los tres controles vacío.
         """
 
+        canonical_process_type = self._resolve_gt_catalog_value(
+            field=PROCESS_TYPE,
+            value=contract.process_type,
+            code="GENERAL_PROCESS_TYPE_CATALOG_VALUE_INVALID",
+        )
+        canonical_contract_type = self._resolve_gt_catalog_value(
+            field=CONTRACT_TYPE,
+            value=contract.contract_type,
+            code="GENERAL_CONTRACT_TYPE_CATALOG_VALUE_INVALID",
+        )
+        canonical_procedure = self._resolve_gt_catalog_value(
+            field=PROCEDURE,
+            value=contract.procedure,
+            code="GENERAL_PROCEDURE_CATALOG_VALUE_INVALID",
+        )
+
         specifications = (
             {
                 "key": "general.process_type",
-                "expected": contract.process_type,
+                "expected": canonical_process_type,
                 "code": "GENERAL_PROCESS_TYPE_SELECTION_FAILED",
                 "label": "Modalidad o Proceso",
                 "allow_decorated_value": False,
@@ -5139,7 +5191,7 @@ class SeleniumBatchPortalProbe:
             },
             {
                 "key": "general.contract_type",
-                "expected": contract.contract_type,
+                "expected": canonical_contract_type,
                 "code": "GENERAL_CONTRACT_TYPE_SELECTION_FAILED",
                 "label": "Tipo de Contrato",
                 "allow_decorated_value": False,
@@ -5148,7 +5200,7 @@ class SeleniumBatchPortalProbe:
             },
             {
                 "key": "general.typology",
-                "expected": contract.procedure,
+                "expected": canonical_procedure,
                 "code": "GENERAL_PROCEDURE_SELECTION_FAILED",
                 "label": "Procedimiento o Causal",
                 "allow_decorated_value": True,
@@ -5230,7 +5282,7 @@ class SeleniumBatchPortalProbe:
             driver=driver,
             resolver=resolver,
             key="general.typology",
-            expected=contract.procedure,
+            expected=canonical_procedure,
             code="GENERAL_CLASSIFICATION_CASCADE_UNSTABLE",
             label="clasificación contractual",
             attempts=[str(observation) for observation in observations],

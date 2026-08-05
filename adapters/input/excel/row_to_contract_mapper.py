@@ -3,6 +3,14 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping, TypeVar, cast
 
 from application.dto import ContractImportResult, ImportIssue
+from application.services.gestion_transparente_catalog import (
+    CONTRACT_TYPE,
+    PROCESS_TYPE,
+    PROCEDURE,
+    CatalogValueNotFoundError,
+    GestionTransparenteCatalog,
+    default_gt_catalog,
+)
 from domain.enums import ContractorNature
 from domain.models import (
     BudgetData,
@@ -41,6 +49,7 @@ class ContractRowMapper:
         default_budget_year: int,
         force_default_dependency: bool = False,
         normalizer: type[ValueNormalizer] = ValueNormalizer,
+        gt_catalog: GestionTransparenteCatalog | None = None,
     ) -> None:
         self._default_dependency = (
             str(default_dependency).strip()
@@ -51,6 +60,7 @@ class ContractRowMapper:
         self._default_budget_year = int(default_budget_year)
         self._force_default_dependency = bool(force_default_dependency)
         self._normalizer = normalizer
+        self._gt_catalog = gt_catalog or default_gt_catalog()
 
         if self._default_budget_year < 2000:
             raise ValueError(
@@ -162,6 +172,28 @@ class ContractRowMapper:
             ContractField.CONTRACT_TYPE,
             self._normalizer.to_text,
             issues,
+        )
+
+        process_type = self._canonicalize_catalog_value(
+            value=process_type,
+            catalog_field=PROCESS_TYPE,
+            excel_field=ContractField.PROCESS_TYPE,
+            issue_code="PROCESS_TYPE_CATALOG_VALUE_INVALID",
+            issues=issues,
+        )
+        procedure = self._canonicalize_catalog_value(
+            value=procedure,
+            catalog_field=PROCEDURE,
+            excel_field=ContractField.PROCEDURE,
+            issue_code="PROCEDURE_CATALOG_VALUE_INVALID",
+            issues=issues,
+        )
+        contract_type = self._canonicalize_catalog_value(
+            value=contract_type,
+            catalog_field=CONTRACT_TYPE,
+            excel_field=ContractField.CONTRACT_TYPE,
+            issue_code="CONTRACT_TYPE_CATALOG_VALUE_INVALID",
+            issues=issues,
         )
 
         budget_item = self._read(
@@ -394,6 +426,37 @@ class ContractRowMapper:
             issues=(),
             raw_data=raw_data,
         )
+
+
+    def _canonicalize_catalog_value(
+        self,
+        *,
+        value: str | None,
+        catalog_field: str,
+        excel_field: str,
+        issue_code: str,
+        issues: list[ImportIssue],
+    ) -> str | None:
+        if value is None:
+            return None
+
+        try:
+            return self._gt_catalog.resolve(catalog_field, value)
+        except CatalogValueNotFoundError as error:
+            allowed = "; ".join(error.allowed_values)
+            issues.append(
+                ImportIssue(
+                    code=issue_code,
+                    message=(
+                        f"El valor {value!r} no coincide con el catálogo "
+                        f"exacto de Gestión Transparente. Valores "
+                        f"permitidos: {allowed}."
+                    ),
+                    field=excel_field,
+                    raw_value=value,
+                )
+            )
+            return None
 
     def _read(
         self,
