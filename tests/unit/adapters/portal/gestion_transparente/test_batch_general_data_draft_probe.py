@@ -146,11 +146,16 @@ def test_should_populate_all_general_fields_without_validation_or_save() -> None
     subject._select_radio = (  # type: ignore[method-assign]
         lambda **kwargs: calls.append(("radio", kwargs["key"]))
     )
+    def select_autocomplete(**kwargs) -> None:
+        calls.append((kwargs["key"], kwargs["expected"]))
+        selection_calls.append(dict(kwargs))
+        resolver.elements.setdefault(
+            kwargs["key"],
+            FakeElement(),
+        ).value = kwargs["expected"]
+
     subject._select_autocomplete_and_confirm = (  # type: ignore[method-assign]
-        lambda **kwargs: (
-            calls.append((kwargs["key"], kwargs["expected"])),
-            selection_calls.append(dict(kwargs)),
-        )
+        select_autocomplete
     )
 
     flags = subject._populate_general_data_draft(
@@ -170,14 +175,70 @@ def test_should_populate_all_general_fields_without_validation_or_save() -> None
     assert ("radio", "general.term_unit_days") in calls
     assert ("radio", "general.other_currency_no") in calls
     assert ("general.process_type", "Contratación Directa") in calls
+    assert ("general.contract_type", "Servicios") in calls
     assert ("general.typology", "Prestación de Servicios") in calls
+    catalog_keys = [
+        key
+        for key, _expected in calls
+        if key.startswith("general.") and key != "general.term_unit_days"
+    ]
+    assert catalog_keys.index("general.process_type") < catalog_keys.index(
+        "general.contract_type"
+    )
+    assert catalog_keys.index("general.contract_type") < catalog_keys.index(
+        "general.typology"
+    )
     typology_call = next(
         call
         for call in selection_calls
         if call["key"] == "general.typology"
     )
     assert typology_call["allow_decorated_value"] is True
-    assert ("general.contract_type", "Servicios") in calls
+
+
+def test_should_select_procedure_after_contract_type_repopulates_catalog() -> None:
+    subject = probe()
+    resolver = FakeResolver()
+    calls: list[str] = []
+
+    def select_autocomplete(**kwargs) -> None:
+        key = kwargs["key"]
+        calls.append(key)
+        resolver.elements.setdefault(key, FakeElement()).value = kwargs[
+            "expected"
+        ]
+        if key == "general.contract_type":
+            # Comportamiento observado en Gestión Transparente: al elegir el
+            # tipo, React repuebla y limpia Procedimiento / Causal.
+            resolver.elements.setdefault(
+                "general.typology",
+                FakeElement(),
+            ).value = ""
+
+    subject._select_autocomplete_and_confirm = (  # type: ignore[method-assign]
+        select_autocomplete
+    )
+
+    flags = subject._select_general_classification_catalogs(
+        driver=object(),
+        waits=FakeWaits(),
+        resolver=resolver,
+        contract=contract(),
+    )
+
+    assert calls == [
+        "general.process_type",
+        "general.contract_type",
+        "general.typology",
+    ]
+    assert resolver.elements["general.typology"].value == (
+        "Prestación de Servicios"
+    )
+    assert flags == {
+        "process_type_selected": True,
+        "contract_type_selected": True,
+        "procedure_selected": True,
+    }
 
 
 def test_general_data_completion_requires_every_postcondition() -> None:

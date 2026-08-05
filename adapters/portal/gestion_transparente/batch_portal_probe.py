@@ -5081,43 +5081,6 @@ class SeleniumBatchPortalProbe:
         )
         flags["term_unit_days_selected"] = True
 
-        self._select_autocomplete_and_confirm(
-            driver=driver,
-            waits=waits,
-            resolver=resolver,
-            key="general.process_type",
-            expected=contract.process_type,
-            code="GENERAL_PROCESS_TYPE_SELECTION_FAILED",
-            label="Modalidad o Proceso",
-        )
-        flags["process_type_selected"] = True
-
-        self._select_autocomplete_and_confirm(
-            driver=driver,
-            waits=waits,
-            resolver=resolver,
-            key="general.typology",
-            expected=contract.procedure,
-            code="GENERAL_PROCEDURE_SELECTION_FAILED",
-            label="Procedimiento o Causal",
-            # El portal puede decorar la causal con el nombre o código de
-            # la modalidad. La coincidencia sigue siendo semántica y se
-            # limita al listbox perteneciente a este control.
-            allow_decorated_value=True,
-        )
-        flags["procedure_selected"] = True
-
-        self._select_autocomplete_and_confirm(
-            driver=driver,
-            waits=waits,
-            resolver=resolver,
-            key="general.contract_type",
-            expected=contract.contract_type,
-            code="GENERAL_CONTRACT_TYPE_SELECTION_FAILED",
-            label="Tipo de Contrato",
-        )
-        flags["contract_type_selected"] = True
-
         self._select_radio(
             driver=driver,
             resolver=resolver,
@@ -5127,7 +5090,148 @@ class SeleniumBatchPortalProbe:
         )
         flags["other_currency_no_selected"] = True
 
+        # La clasificación contractual queda como última interacción de C5.
+        # Así la postcondición conjunta se verifica después de cualquier
+        # re-render provocado por los demás controles del formulario.
+        classification_flags = (
+            self._select_general_classification_catalogs(
+                driver=driver,
+                waits=waits,
+                resolver=resolver,
+                contract=contract,
+            )
+        )
+        flags.update(classification_flags)
+
         return flags
+
+
+    def _select_general_classification_catalogs(
+        self,
+        *,
+        driver: WebDriver,
+        waits: SeleniumWaits,
+        resolver: ElementResolver,
+        contract: ContractData,
+    ) -> dict[str, bool]:
+        """Selecciona y estabiliza Modalidad, Tipo y Procedimiento.
+
+        En el portal real, ``Tipo de Contrato`` repuebla el catálogo de
+        ``Procedimiento / Causal``. Si la causal se selecciona antes del tipo,
+        React la borra aunque la selección hubiera sido confirmada de forma
+        inmediata. Por eso el orden estable es raíz -> dependencia -> hoja:
+
+        Modalidad o Proceso -> Tipo de Contrato -> Procedimiento / Causal.
+
+        La postcondición se vuelve a comprobar como grupo para impedir que C5
+        se marque como completo con alguno de los tres controles vacío.
+        """
+
+        specifications = (
+            {
+                "key": "general.process_type",
+                "expected": contract.process_type,
+                "code": "GENERAL_PROCESS_TYPE_SELECTION_FAILED",
+                "label": "Modalidad o Proceso",
+                "allow_decorated_value": False,
+                "flag": "process_type_selected",
+            },
+            {
+                "key": "general.contract_type",
+                "expected": contract.contract_type,
+                "code": "GENERAL_CONTRACT_TYPE_SELECTION_FAILED",
+                "label": "Tipo de Contrato",
+                "allow_decorated_value": False,
+                "flag": "contract_type_selected",
+            },
+            {
+                "key": "general.typology",
+                "expected": contract.procedure,
+                "code": "GENERAL_PROCEDURE_SELECTION_FAILED",
+                "label": "Procedimiento o Causal",
+                "allow_decorated_value": True,
+                "flag": "procedure_selected",
+            },
+        )
+        observations: list[dict[str, str]] = []
+
+        for cycle in range(1, 4):
+            for specification in specifications:
+                if self._resolved_autocomplete_matches(
+                    resolver=resolver,
+                    key=str(specification["key"]),
+                    expected=str(specification["expected"]),
+                    allow_decorated_value=bool(
+                        specification["allow_decorated_value"]
+                    ),
+                ):
+                    continue
+
+                self._select_autocomplete_and_confirm(
+                    driver=driver,
+                    waits=waits,
+                    resolver=resolver,
+                    key=str(specification["key"]),
+                    expected=str(specification["expected"]),
+                    code=str(specification["code"]),
+                    label=str(specification["label"]),
+                    allow_decorated_value=bool(
+                        specification["allow_decorated_value"]
+                    ),
+                )
+
+            actual_values = {
+                str(specification["key"]): (
+                    self._resolved_autocomplete_value(
+                        resolver=resolver,
+                        key=str(specification["key"]),
+                    )
+                )
+                for specification in specifications
+            }
+            observations.append(
+                {
+                    "cycle": str(cycle),
+                    **actual_values,
+                }
+            )
+
+            if all(
+                self._resolved_autocomplete_matches(
+                    resolver=resolver,
+                    key=str(specification["key"]),
+                    expected=str(specification["expected"]),
+                    allow_decorated_value=bool(
+                        specification["allow_decorated_value"]
+                    ),
+                )
+                for specification in specifications
+            ):
+                return {
+                    str(specification["flag"]): True
+                    for specification in specifications
+                }
+
+        evidence_directory = self._capture_catalog_failure_evidence(
+            driver=driver,
+            resolver=resolver,
+            key="general.typology",
+            expected=contract.procedure,
+            code="GENERAL_CLASSIFICATION_CASCADE_UNSTABLE",
+            label="clasificación contractual",
+            attempts=[str(observation) for observation in observations],
+        )
+        raise PortalTimeoutError(
+            (
+                "Modalidad, Tipo de Contrato y Procedimiento / Causal no "
+                "permanecieron seleccionados simultáneamente."
+            ),
+            code="GENERAL_CLASSIFICATION_CASCADE_UNSTABLE",
+            metadata={
+                "observations": observations,
+                "evidence_directory": evidence_directory,
+            },
+        )
 
 
     def _populate_general_completion_draft(
