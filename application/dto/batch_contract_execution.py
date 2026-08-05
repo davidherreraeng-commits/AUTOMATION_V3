@@ -9,6 +9,7 @@ from domain.enums import (
     ExecutionMode,
     ExecutionStatus,
     RealWriteAuthorizationStatus,
+    InstitutionalTestPlanStatus,
 )
 from domain.enums.batch_status import BatchContractStatus, BatchStatus
 from domain.models import ContractExecution
@@ -59,6 +60,14 @@ class BatchContractExecutionPreflight:
     authorization_expires_at: datetime | None = None
     authorization_required_confirmation: str | None = None
     authorization_ttl_seconds: int | None = None
+    institutional_plan_required: bool = False
+    institutional_plan_id: UUID | None = None
+    institutional_plan_status: InstitutionalTestPlanStatus | None = None
+    institutional_plan_expires_at: datetime | None = None
+    institutional_plan_diagnostic_checked_at: datetime | None = None
+    institutional_plan_ready: bool = False
+    institutional_plan_required_confirmation: str | None = None
+    institutional_plan_window_seconds: int | None = None
 
     @property
     def can_execute(self) -> bool:
@@ -86,6 +95,8 @@ class BatchContractExecutionResult:
     evidence_count: int = 0
     authorization_id: UUID | None = None
     authorization_consumed_at: datetime | None = None
+    institutional_plan_id: UUID | None = None
+    institutional_plan_consumed_at: datetime | None = None
     transitions: tuple[StepExecutionResult, ...] = ()
 
     @property

@@ -9,6 +9,9 @@ from domain.enums.real_write_authorization_status import (
 )
 from domain.enums.user_role import UserRole
 
+from domain.enums.institutional_test_plan_status import (
+    InstitutionalTestPlanStatus,
+)
 __all__ = [
     "BatchContractStatus",
     "BatchStatus",
@@ -19,4 +22,5 @@ __all__ = [
     "ExecutionMode",
     "RealWriteAuthorizationStatus",
     "UserRole",
+    "InstitutionalTestPlanStatus",
 ]

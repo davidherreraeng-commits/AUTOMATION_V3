@@ -19,6 +19,9 @@ from adapters.persistence.sqlite.user_repository import SQLiteUserRepository
 from adapters.persistence.sqlite.real_write_authorization_repository import (
     SQLiteRealWriteAuthorizationRepository,
 )
+from adapters.persistence.sqlite.institutional_test_plan_repository import (
+    SQLiteInstitutionalTestPlanRepository,
+)
 from adapters.persistence.json_execution_evidence_repository import (
     JsonExecutionEvidenceRepository,
 )
@@ -38,6 +41,9 @@ from application.services.controlled_batch_contract_execution_service import (
 )
 from application.services.real_write_authorization_service import (
     RealWriteAuthorizationService,
+)
+from application.services.institutional_test_plan_service import (
+    InstitutionalTestPlanService,
 )
 from application.services.batch_execution_service import BatchExecutionService
 from application.use_cases.execute_contract_in_session import (
@@ -92,6 +98,9 @@ def create_app(
         real_write_authorizations = (
             SQLiteRealWriteAuthorizationRepository(database_path)
         )
+        institutional_test_plans = (
+            SQLiteInstitutionalTestPlanRepository(database_path)
+        )
 
         database_bootstrapper = SQLiteDatabaseBootstrapper(
             database_path,
@@ -109,6 +118,7 @@ def create_app(
                 batches.initialize,
                 executions.initialize,
                 real_write_authorizations.initialize,
+                institutional_test_plans.initialize,
             )
         )
         checkpoints = ExecutionCheckpointService(executions)
@@ -223,6 +233,9 @@ def create_app(
         app.state.real_write_authorization_repository = (
             real_write_authorizations
         )
+        app.state.institutional_test_plan_repository = (
+            institutional_test_plans
+        )
         app.state.real_write_enabled = real_write_enabled
         real_write_authorization_service = RealWriteAuthorizationService(
             repository=real_write_authorizations,
@@ -237,6 +250,54 @@ def create_app(
         app.state.expired_real_write_authorizations = (
             real_write_authorization_service.cleanup_expired()
         )
+
+        portal_probe = batch_portal_probe
+        if portal_probe is None:
+            from adapters.portal.gestion_transparente.batch_portal_probe import (
+                SeleniumBatchPortalProbe,
+            )
+
+            portal_probe = SeleniumBatchPortalProbe(
+                login_url=resolved_settings.portal_login_url,
+                headless=resolved_settings.batch_execution_headless,
+                timeout_seconds=(
+                    resolved_settings.batch_execution_timeout_seconds
+                ),
+                driver_path=resolved_settings.portal_driver_path,
+                chrome_binary=resolved_settings.portal_chrome_binary,
+            )
+
+        batch_portal_probe_service = BatchPortalProbeService(
+            batches=batches,
+            credentials=portal_credentials,
+            cipher=credential_cipher,
+            probe=portal_probe,
+            credential_max_age_hours=(
+                resolved_settings
+                .batch_execution_credential_max_age_hours
+            ),
+        )
+        app.state.batch_portal_probe_service = batch_portal_probe_service
+
+        institutional_test_plan_service = InstitutionalTestPlanService(
+            repository=institutional_test_plans,
+            executions=real_contract_execution_service,
+            portal_probe=batch_portal_probe_service,
+            enabled=resolved_settings.institutional_test_plan_enabled,
+            window_seconds=(
+                resolved_settings.institutional_test_plan_window_seconds
+            ),
+            diagnostic_max_age_seconds=(
+                resolved_settings
+                .institutional_test_plan_diagnostic_max_age_seconds
+            ),
+        )
+        app.state.institutional_test_plan_service = (
+            institutional_test_plan_service
+        )
+        app.state.expired_institutional_test_plans = (
+            institutional_test_plan_service.cleanup_expired()
+        )
         app.state.batch_contract_execution_service = (
             ControlledBatchContractExecutionService(
                 real_service=real_contract_execution_service,
@@ -244,6 +305,7 @@ def create_app(
                 evidence=execution_evidence_repository,
                 real_write_enabled=real_write_enabled,
                 authorizations=real_write_authorization_service,
+                institutional_plans=institutional_test_plan_service,
             )
         )
 
@@ -274,33 +336,6 @@ def create_app(
             max_workers=resolved_settings.batch_execution_workers,
         )
         app.state.batch_execution_service = batch_execution_service
-
-        portal_probe = batch_portal_probe
-        if portal_probe is None:
-            from adapters.portal.gestion_transparente.batch_portal_probe import (
-                SeleniumBatchPortalProbe,
-            )
-
-            portal_probe = SeleniumBatchPortalProbe(
-                login_url=resolved_settings.portal_login_url,
-                headless=resolved_settings.batch_execution_headless,
-                timeout_seconds=(
-                    resolved_settings.batch_execution_timeout_seconds
-                ),
-                driver_path=resolved_settings.portal_driver_path,
-                chrome_binary=resolved_settings.portal_chrome_binary,
-            )
-
-        app.state.batch_portal_probe_service = BatchPortalProbeService(
-            batches=batches,
-            credentials=portal_credentials,
-            cipher=credential_cipher,
-            probe=portal_probe,
-            credential_max_age_hours=(
-                resolved_settings
-                .batch_execution_credential_max_age_hours
-            ),
-        )
 
         try:
             yield

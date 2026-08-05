@@ -17,6 +17,9 @@ from application.services.batch_execution_service import BatchExecutionService
 from application.services.batch_portal_probe_service import (
     BatchPortalProbeService,
 )
+from application.services.institutional_test_plan_service import (
+    InstitutionalTestPlanService,
+)
 from domain.errors.batch_contract_execution_errors import (
     BatchContractExecutionBlockedError,
     BatchContractExecutionConfirmationError,
@@ -43,6 +46,20 @@ from domain.errors.real_write_authorization_errors import (
     RealWriteAuthorizationRevocationConfirmationError,
     RealWriteAuthorizationRevokedError,
 )
+from domain.errors.institutional_test_plan_errors import (
+    InstitutionalTestPlanCancelledError,
+    InstitutionalTestPlanConfirmationError,
+    InstitutionalTestPlanConsumedError,
+    InstitutionalTestPlanContextError,
+    InstitutionalTestPlanDiagnosticExpiredError,
+    InstitutionalTestPlanDiagnosticRequiredError,
+    InstitutionalTestPlanDisabledError,
+    InstitutionalTestPlanExpiredError,
+    InstitutionalTestPlanNotArmedError,
+    InstitutionalTestPlanNotFoundError,
+    InstitutionalTestPlanRepositoryError,
+)
+
 from domain.errors.batch_execution_errors import (
     BatchExecutionBlockedError,
     BatchExecutionInProgressError,
@@ -68,6 +85,7 @@ from interfaces.api.dependencies import (
     get_batch_contract_execution_service,
     get_batch_execution_service,
     get_batch_portal_probe_service,
+    get_institutional_test_plan_service,
 )
 from interfaces.api.schemas.batches import (
     BatchContractExecutionPreflightResponse,
@@ -77,6 +95,11 @@ from interfaces.api.schemas.batches import (
     RealWriteAuthorizationIssueRequest,
     RealWriteAuthorizationRevokeRequest,
     RealWriteAuthorizationResponse,
+    InstitutionalTestPlanArmRequest,
+    InstitutionalTestPlanCancelRequest,
+    InstitutionalTestPlanCreateRequest,
+    InstitutionalTestPlanDiagnosticRequest,
+    InstitutionalTestPlanResponse,
     BatchAssistantProbeResponse,
     BatchContractSaveProbeRequest,
     BatchContractSaveProbeResponse,
@@ -522,6 +545,321 @@ def revoke_selected_contract_real_write_authorization(
     )
 
 
+
+def _institutional_plan_error(error: Exception) -> HTTPException:
+    if isinstance(error, InstitutionalTestPlanNotFoundError):
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": error.code, "message": str(error)},
+        )
+    if isinstance(error, InstitutionalTestPlanContextError):
+        return HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": error.code, "message": str(error)},
+        )
+    if isinstance(error, InstitutionalTestPlanRepositoryError):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": error.code, "message": str(error)},
+        )
+    if isinstance(error, InstitutionalTestPlanConfirmationError):
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": error.code,
+                "message": str(error),
+                "required_confirmation": error.required_confirmation,
+            },
+        )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": getattr(
+                error,
+                "code",
+                "INSTITUTIONAL_TEST_PLAN_ERROR",
+            ),
+            "message": str(error),
+        },
+    )
+
+
+@router.post(
+    "/{batch_id}/contracts/{item_id}/execution/institutional-plan",
+    response_model=InstitutionalTestPlanResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_selected_contract_institutional_plan(
+    batch_id: UUID,
+    item_id: UUID,
+    payload: InstitutionalTestPlanCreateRequest,
+    actor: Superuser,
+    service: Annotated[
+        InstitutionalTestPlanService,
+        Depends(get_institutional_test_plan_service),
+    ],
+) -> InstitutionalTestPlanResponse:
+    try:
+        plan = service.create(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
+            confirmation=payload.confirmation,
+        )
+        events = service.list_events(
+            batch_id=batch_id,
+            item_id=item_id,
+        )
+    except (
+        InstitutionalTestPlanDisabledError,
+        InstitutionalTestPlanConfirmationError,
+        InstitutionalTestPlanRepositoryError,
+        BatchContractExecutionBlockedError,
+        BatchNotFoundError,
+        BatchContractItemNotFoundError,
+    ) as error:
+        if isinstance(error, BatchNotFoundError):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(error),
+            ) from error
+        if isinstance(error, BatchContractItemNotFoundError):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(error),
+            ) from error
+        if isinstance(error, BatchContractExecutionBlockedError):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "INSTITUTIONAL_TEST_PLAN_BLOCKED",
+                    "message": str(error),
+                    "issues": [
+                        {"code": code, "message": message}
+                        for code, message in error.issues
+                    ],
+                },
+            ) from error
+        raise _institutional_plan_error(error) from error
+
+    return InstitutionalTestPlanResponse.from_domain(
+        plan=plan,
+        events=events,
+        enabled=service.enabled,
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number=plan.contract_number,
+        dependency=plan.dependency,
+    )
+
+
+@router.get(
+    "/{batch_id}/contracts/{item_id}/execution/institutional-plan",
+    response_model=InstitutionalTestPlanResponse,
+)
+def get_selected_contract_institutional_plan(
+    batch_id: UUID,
+    item_id: UUID,
+    actor: Superuser,
+    service: Annotated[
+        InstitutionalTestPlanService,
+        Depends(get_institutional_test_plan_service),
+    ],
+) -> InstitutionalTestPlanResponse:
+    try:
+        plan, events, contract_number, dependency = service.status(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
+        )
+    except (BatchNotFoundError, BatchContractItemNotFoundError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except InstitutionalTestPlanRepositoryError as error:
+        raise _institutional_plan_error(error) from error
+
+    return InstitutionalTestPlanResponse.from_domain(
+        plan=plan,
+        events=events,
+        enabled=service.enabled,
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number=contract_number,
+        dependency=dependency,
+    )
+
+
+@router.post(
+    "/{batch_id}/contracts/{item_id}/execution/institutional-plan/diagnostic",
+    response_model=InstitutionalTestPlanResponse,
+)
+def diagnose_selected_contract_institutional_plan(
+    batch_id: UUID,
+    item_id: UUID,
+    payload: InstitutionalTestPlanDiagnosticRequest,
+    actor: Superuser,
+    service: Annotated[
+        InstitutionalTestPlanService,
+        Depends(get_institutional_test_plan_service),
+    ],
+) -> InstitutionalTestPlanResponse:
+    try:
+        plan = service.run_read_only_diagnostic(
+            plan_id=payload.plan_id,
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
+        )
+        events = service.list_events(
+            batch_id=batch_id,
+            item_id=item_id,
+        )
+    except (
+        InstitutionalTestPlanDisabledError,
+        InstitutionalTestPlanNotFoundError,
+        InstitutionalTestPlanContextError,
+        InstitutionalTestPlanExpiredError,
+        InstitutionalTestPlanCancelledError,
+        InstitutionalTestPlanConsumedError,
+        InstitutionalTestPlanRepositoryError,
+        BatchPortalProbeBlockedError,
+        BatchPortalProbeConfigurationError,
+    ) as error:
+        if isinstance(
+            error,
+            (BatchPortalProbeBlockedError, BatchPortalProbeConfigurationError),
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "INSTITUTIONAL_TEST_PLAN_DIAGNOSTIC_BLOCKED",
+                    "message": str(error),
+                },
+            ) from error
+        raise _institutional_plan_error(error) from error
+
+    return InstitutionalTestPlanResponse.from_domain(
+        plan=plan,
+        events=events,
+        enabled=service.enabled,
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number=plan.contract_number,
+        dependency=plan.dependency,
+    )
+
+
+@router.post(
+    "/{batch_id}/contracts/{item_id}/execution/institutional-plan/arm",
+    response_model=InstitutionalTestPlanResponse,
+)
+def arm_selected_contract_institutional_plan(
+    batch_id: UUID,
+    item_id: UUID,
+    payload: InstitutionalTestPlanArmRequest,
+    actor: Superuser,
+    service: Annotated[
+        InstitutionalTestPlanService,
+        Depends(get_institutional_test_plan_service),
+    ],
+) -> InstitutionalTestPlanResponse:
+    try:
+        plan = service.arm(
+            plan_id=payload.plan_id,
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
+            confirmation=payload.confirmation,
+        )
+        events = service.list_events(
+            batch_id=batch_id,
+            item_id=item_id,
+        )
+    except (
+        InstitutionalTestPlanDisabledError,
+        InstitutionalTestPlanConfirmationError,
+        InstitutionalTestPlanNotFoundError,
+        InstitutionalTestPlanContextError,
+        InstitutionalTestPlanExpiredError,
+        InstitutionalTestPlanCancelledError,
+        InstitutionalTestPlanConsumedError,
+        InstitutionalTestPlanDiagnosticRequiredError,
+        InstitutionalTestPlanDiagnosticExpiredError,
+        InstitutionalTestPlanRepositoryError,
+    ) as error:
+        raise _institutional_plan_error(error) from error
+
+    return InstitutionalTestPlanResponse.from_domain(
+        plan=plan,
+        events=events,
+        enabled=service.enabled,
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number=plan.contract_number,
+        dependency=plan.dependency,
+    )
+
+
+@router.delete(
+    "/{batch_id}/contracts/{item_id}/execution/institutional-plan",
+    response_model=InstitutionalTestPlanResponse,
+)
+def cancel_selected_contract_institutional_plan(
+    batch_id: UUID,
+    item_id: UUID,
+    payload: InstitutionalTestPlanCancelRequest,
+    actor: Superuser,
+    service: Annotated[
+        InstitutionalTestPlanService,
+        Depends(get_institutional_test_plan_service),
+    ],
+) -> InstitutionalTestPlanResponse:
+    try:
+        plan = service.cancel(
+            plan_id=payload.plan_id,
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=actor.dependency,
+            actor_username=actor.username,
+            actor_user_id=actor.user_id,
+            confirmation=payload.confirmation,
+        )
+        events = service.list_events(
+            batch_id=batch_id,
+            item_id=item_id,
+        )
+    except (
+        InstitutionalTestPlanConfirmationError,
+        InstitutionalTestPlanNotFoundError,
+        InstitutionalTestPlanContextError,
+        InstitutionalTestPlanExpiredError,
+        InstitutionalTestPlanCancelledError,
+        InstitutionalTestPlanConsumedError,
+        InstitutionalTestPlanRepositoryError,
+    ) as error:
+        raise _institutional_plan_error(error) from error
+
+    return InstitutionalTestPlanResponse.from_domain(
+        plan=plan,
+        events=events,
+        enabled=service.enabled,
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number=plan.contract_number,
+        dependency=plan.dependency,
+    )
+
+
 @router.post(
     "/{batch_id}/contracts/{item_id}/execution",
     response_model=BatchContractExecutionResponse,
@@ -547,6 +885,7 @@ def execute_selected_contract(
             actor_username=actor.username,
             actor_user_id=actor.user_id,
             authorization_token=payload.authorization_token,
+            institutional_plan_id=payload.institutional_plan_id,
         )
     except BatchNotFoundError as error:
         raise HTTPException(
@@ -623,6 +962,21 @@ def execute_selected_contract(
                 "No fue posible validar la autorización temporal."
             ),
         ) from error
+    except (
+        InstitutionalTestPlanNotFoundError,
+        InstitutionalTestPlanExpiredError,
+        InstitutionalTestPlanCancelledError,
+        InstitutionalTestPlanConsumedError,
+        InstitutionalTestPlanNotArmedError,
+        InstitutionalTestPlanDiagnosticRequiredError,
+        InstitutionalTestPlanDiagnosticExpiredError,
+        InstitutionalTestPlanDisabledError,
+    ) as error:
+        raise _institutional_plan_error(error) from error
+    except InstitutionalTestPlanContextError as error:
+        raise _institutional_plan_error(error) from error
+    except InstitutionalTestPlanRepositoryError as error:
+        raise _institutional_plan_error(error) from error
     except (
         BatchContractExecutionIdentityError,
         BatchContractExecutionInProgressError,

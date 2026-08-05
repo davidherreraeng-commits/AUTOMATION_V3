@@ -7,8 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BASELINE_MIGRATION_ID = "001_runtime_schema_baseline"
+INSTITUTIONAL_PLAN_MIGRATION_ID = "002_institutional_test_plan"
 
 
 class SQLiteDatabaseBootstrapError(RuntimeError):
@@ -131,6 +132,35 @@ _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "recorded_at",
         }
     ),
+    "institutional_test_plans": frozenset(
+        {
+            "plan_id",
+            "batch_id",
+            "item_id",
+            "contract_number",
+            "dependency",
+            "actor_username",
+            "actor_user_id",
+            "status",
+            "created_at",
+            "starts_at",
+            "expires_at",
+            "execution_count",
+            "diagnostic_checked_at",
+            "diagnostic_success",
+            "armed_at",
+            "consumed_at",
+            "cancelled_at",
+        }
+    ),
+    "institutional_test_plan_events": frozenset(
+        {
+            "event_id",
+            "plan_id",
+            "event_type",
+            "recorded_at",
+        }
+    ),
     "rpa_schema_migrations": frozenset(
         {
             "migration_id",
@@ -197,13 +227,34 @@ class SQLiteDatabaseBootstrapper:
         if had_content_before:
             self._assert_integrity()
 
-        migration_pending = not self._migration_is_applied(
-            BASELINE_MIGRATION_ID
+        migrations = (
+            (
+                BASELINE_MIGRATION_ID,
+                1,
+                (
+                    "Esquema operativo consolidado para usuarios, "
+                    "credenciales, lotes, ejecuciones y "
+                    "autorizaciones temporales."
+                ),
+            ),
+            (
+                INSTITUTIONAL_PLAN_MIGRATION_ID,
+                2,
+                (
+                    "Planes institucionales de un solo contrato y "
+                    "diagnóstico read-only del portal."
+                ),
+            ),
+        )
+        pending_migrations = tuple(
+            migration
+            for migration in migrations
+            if not self._migration_is_applied(migration[0])
         )
         backup_path: Path | None = None
 
         if (
-            migration_pending
+            pending_migrations
             and had_content_before
             and self._backup_before_migration
         ):
@@ -216,7 +267,11 @@ class SQLiteDatabaseBootstrapper:
             applied_migrations: list[str] = []
             with self._connect() as connection:
                 connection.executescript(_MIGRATION_SCHEMA)
-                if migration_pending:
+                for (
+                    migration_id,
+                    schema_version,
+                    description,
+                ) in pending_migrations:
                     connection.execute(
                         """
                         INSERT INTO rpa_schema_migrations (
@@ -227,17 +282,13 @@ class SQLiteDatabaseBootstrapper:
                         ) VALUES (?, ?, ?, ?)
                         """,
                         (
-                            BASELINE_MIGRATION_ID,
-                            SCHEMA_VERSION,
-                            (
-                                "Esquema operativo consolidado para usuarios, "
-                                "credenciales, lotes, ejecuciones y "
-                                "autorizaciones temporales."
-                            ),
+                            migration_id,
+                            schema_version,
+                            description,
                             datetime.now(UTC).isoformat(),
                         ),
                     )
-                    applied_migrations.append(BASELINE_MIGRATION_ID)
+                    applied_migrations.append(migration_id)
 
                 connection.execute(
                     f"PRAGMA user_version = {SCHEMA_VERSION}"
@@ -316,7 +367,7 @@ class SQLiteDatabaseBootstrapper:
         self._backup_directory.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
         backup_path = self._backup_directory / (
-            f"{self._database_path.stem}_before_6C14G_{timestamp}.sqlite3"
+            f"{self._database_path.stem}_before_schema_v{SCHEMA_VERSION}_{timestamp}.sqlite3"
         )
 
         try:
@@ -396,17 +447,38 @@ class SQLiteDatabaseBootstrapper:
                             + ", ".join(missing_columns)
                         )
 
-                migration = connection.execute(
-                    """
-                    SELECT schema_version
-                      FROM rpa_schema_migrations
-                     WHERE migration_id = ?
-                    """,
-                    (BASELINE_MIGRATION_ID,),
-                ).fetchone()
-                if migration is None or int(migration[0]) != SCHEMA_VERSION:
+                expected_migrations = {
+                    BASELINE_MIGRATION_ID: 1,
+                    INSTITUTIONAL_PLAN_MIGRATION_ID: 2,
+                }
+                for migration_id, expected_version in (
+                    expected_migrations.items()
+                ):
+                    migration = connection.execute(
+                        """
+                        SELECT schema_version
+                          FROM rpa_schema_migrations
+                         WHERE migration_id = ?
+                        """,
+                        (migration_id,),
+                    ).fetchone()
+                    if (
+                        migration is None
+                        or int(migration[0]) != expected_version
+                    ):
+                        raise SQLiteSchemaVerificationError(
+                            "La migración obligatoria no quedó registrada: "
+                            f"{migration_id}."
+                        )
+
+                user_version = int(
+                    connection.execute(
+                        "PRAGMA user_version"
+                    ).fetchone()[0]
+                )
+                if user_version != SCHEMA_VERSION:
                     raise SQLiteSchemaVerificationError(
-                        "La migración base no quedó registrada."
+                        "PRAGMA user_version no coincide con el esquema."
                     )
 
                 connection.execute("PRAGMA optimize")

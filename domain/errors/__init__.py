@@ -67,6 +67,20 @@ from domain.errors.portal_errors import (
     PortalValidationError,
 )
 
+from domain.errors.institutional_test_plan_errors import (
+    InstitutionalTestPlanCancelledError,
+    InstitutionalTestPlanConfirmationError,
+    InstitutionalTestPlanConsumedError,
+    InstitutionalTestPlanContextError,
+    InstitutionalTestPlanDiagnosticExpiredError,
+    InstitutionalTestPlanDiagnosticRequiredError,
+    InstitutionalTestPlanDisabledError,
+    InstitutionalTestPlanError,
+    InstitutionalTestPlanExpiredError,
+    InstitutionalTestPlanNotArmedError,
+    InstitutionalTestPlanNotFoundError,
+    InstitutionalTestPlanRepositoryError,
+)
 __all__ = [
     "RealWriteAuthorizationConfirmationError",
     "RealWriteAuthorizationConsumedError",
@@ -120,4 +134,16 @@ __all__ = [
     "PortalValidationError",
     "UnsafeFileNameError",
     "UnsupportedFileExtensionError",
+    "InstitutionalTestPlanCancelledError",
+    "InstitutionalTestPlanConfirmationError",
+    "InstitutionalTestPlanConsumedError",
+    "InstitutionalTestPlanContextError",
+    "InstitutionalTestPlanDiagnosticExpiredError",
+    "InstitutionalTestPlanDiagnosticRequiredError",
+    "InstitutionalTestPlanDisabledError",
+    "InstitutionalTestPlanError",
+    "InstitutionalTestPlanExpiredError",
+    "InstitutionalTestPlanNotArmedError",
+    "InstitutionalTestPlanNotFoundError",
+    "InstitutionalTestPlanRepositoryError",
 ]

@@ -1,5 +1,6 @@
 from adapters.persistence.sqlite.database_bootstrap import (
     BASELINE_MIGRATION_ID,
+    INSTITUTIONAL_PLAN_MIGRATION_ID,
     SCHEMA_VERSION,
     SQLiteBootstrapReport,
     SQLiteDatabaseBootstrapError,
@@ -17,6 +18,9 @@ from adapters.persistence.sqlite.portal_credential_repository import (
 )
 from adapters.persistence.sqlite.user_repository import SQLiteUserRepository
 
+from adapters.persistence.sqlite.institutional_test_plan_repository import (
+    SQLiteInstitutionalTestPlanRepository,
+)
 __all__ = [
     "BASELINE_MIGRATION_ID",
     "SCHEMA_VERSION",
@@ -30,4 +34,6 @@ __all__ = [
     "SQLiteExecutionRepository",
     "SQLitePortalCredentialRepository",
     "SQLiteUserRepository",
+    "SQLiteInstitutionalTestPlanRepository",
+    "INSTITUTIONAL_PLAN_MIGRATION_ID",
 ]

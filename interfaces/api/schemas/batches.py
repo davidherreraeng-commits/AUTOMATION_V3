@@ -33,8 +33,15 @@ from application.dto.real_write_authorization import (
     RealWriteAuthorization,
     RealWriteAuthorizationEvent,
 )
+from application.dto.institutional_test_plan import (
+    InstitutionalTestPlan,
+    InstitutionalTestPlanEvent,
+)
 from domain.enums.real_write_authorization_status import (
     RealWriteAuthorizationStatus,
+)
+from domain.enums.institutional_test_plan_status import (
+    InstitutionalTestPlanStatus,
 )
 
 
@@ -71,6 +78,7 @@ class BatchContractExecutionRequest(BaseModel):
         min_length=1,
         max_length=256,
     )
+    institutional_plan_id: UUID | None = None
 
     @field_validator("confirmation")
     @classmethod
@@ -289,6 +297,184 @@ class RealWriteAuthorizationResponse(BaseModel):
             ),
             events=[
                 RealWriteAuthorizationEventResponse.from_domain(event)
+                for event in events
+            ],
+        )
+
+
+
+class InstitutionalTestPlanCreateRequest(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=220)
+
+
+class InstitutionalTestPlanDiagnosticRequest(BaseModel):
+    plan_id: UUID
+
+
+class InstitutionalTestPlanArmRequest(BaseModel):
+    plan_id: UUID
+    confirmation: str = Field(min_length=1, max_length=220)
+
+
+class InstitutionalTestPlanCancelRequest(BaseModel):
+    plan_id: UUID
+    confirmation: str = Field(min_length=1, max_length=220)
+
+
+class InstitutionalTestPlanEventResponse(BaseModel):
+    event_id: UUID
+    plan_id: UUID | None
+    event_type: str
+    recorded_at: datetime
+    correlation_id: UUID | None
+    reason: str | None
+    metadata: dict[str, object]
+
+    @classmethod
+    def from_domain(
+        cls,
+        event: InstitutionalTestPlanEvent,
+    ) -> "InstitutionalTestPlanEventResponse":
+        return cls(
+            event_id=event.event_id,
+            plan_id=event.plan_id,
+            event_type=event.event_type,
+            recorded_at=event.recorded_at,
+            correlation_id=event.correlation_id,
+            reason=event.reason,
+            metadata=dict(event.metadata),
+        )
+
+
+class InstitutionalTestPlanResponse(BaseModel):
+    available: bool
+    enabled: bool
+    plan_id: UUID | None
+    batch_id: UUID
+    item_id: UUID
+    contract_number: str
+    dependency: str
+    status: InstitutionalTestPlanStatus | None
+    created_at: datetime | None
+    starts_at: datetime | None
+    expires_at: datetime | None
+    diagnostic_checked_at: datetime | None
+    diagnostic_success: bool | None
+    diagnostic_code: str | None
+    diagnostic_message: str | None
+    diagnostic_authenticated: bool
+    diagnostic_contracting_menu_found: bool
+    diagnostic_enter_contract_found: bool
+    diagnostic_assistant_access_found: bool
+    diagnostic_duration_ms: int | None
+    armed_at: datetime | None
+    consumed_at: datetime | None
+    consumed_correlation_id: UUID | None
+    cancelled_at: datetime | None
+    execution_count: int
+    max_executions: int
+    required_create_confirmation: str
+    required_arm_confirmation: str
+    required_cancel_confirmation: str
+    server_time: datetime
+    seconds_remaining: int
+    events: list[InstitutionalTestPlanEventResponse] = Field(
+        default_factory=list
+    )
+
+    @classmethod
+    def from_domain(
+        cls,
+        *,
+        plan: InstitutionalTestPlan | None,
+        events: tuple[InstitutionalTestPlanEvent, ...],
+        enabled: bool,
+        batch_id: UUID,
+        item_id: UUID,
+        contract_number: str,
+        dependency: str,
+    ) -> "InstitutionalTestPlanResponse":
+        now = datetime.now(UTC)
+        remaining = 0
+        if plan is not None and plan.status in {
+            InstitutionalTestPlanStatus.DRAFT,
+            InstitutionalTestPlanStatus.READY,
+            InstitutionalTestPlanStatus.ARMED,
+        }:
+            remaining = max(
+                0,
+                int((plan.expires_at - now).total_seconds()),
+            )
+        return cls(
+            available=(
+                plan is not None
+                and plan.status is InstitutionalTestPlanStatus.ARMED
+                and remaining > 0
+            ),
+            enabled=bool(enabled),
+            plan_id=plan.plan_id if plan is not None else None,
+            batch_id=batch_id,
+            item_id=item_id,
+            contract_number=contract_number,
+            dependency=dependency,
+            status=plan.status if plan is not None else None,
+            created_at=plan.created_at if plan is not None else None,
+            starts_at=plan.starts_at if plan is not None else None,
+            expires_at=plan.expires_at if plan is not None else None,
+            diagnostic_checked_at=(
+                plan.diagnostic_checked_at if plan is not None else None
+            ),
+            diagnostic_success=(
+                plan.diagnostic_success if plan is not None else None
+            ),
+            diagnostic_code=(
+                plan.diagnostic_code if plan is not None else None
+            ),
+            diagnostic_message=(
+                plan.diagnostic_message if plan is not None else None
+            ),
+            diagnostic_authenticated=(
+                plan.diagnostic_authenticated if plan is not None else False
+            ),
+            diagnostic_contracting_menu_found=(
+                plan.diagnostic_contracting_menu_found
+                if plan is not None
+                else False
+            ),
+            diagnostic_enter_contract_found=(
+                plan.diagnostic_enter_contract_found
+                if plan is not None
+                else False
+            ),
+            diagnostic_assistant_access_found=(
+                plan.diagnostic_assistant_access_found
+                if plan is not None
+                else False
+            ),
+            diagnostic_duration_ms=(
+                plan.diagnostic_duration_ms if plan is not None else None
+            ),
+            armed_at=plan.armed_at if plan is not None else None,
+            consumed_at=plan.consumed_at if plan is not None else None,
+            consumed_correlation_id=(
+                plan.consumed_correlation_id if plan is not None else None
+            ),
+            cancelled_at=plan.cancelled_at if plan is not None else None,
+            execution_count=plan.execution_count if plan is not None else 0,
+            max_executions=plan.max_executions if plan is not None else 1,
+            required_create_confirmation=(
+                f"CREAR PLAN INSTITUCIONAL {contract_number}"
+            ),
+            required_arm_confirmation=(
+                f"ARMAR PRUEBA INSTITUCIONAL {contract_number}"
+            ),
+            required_cancel_confirmation=(
+                f"CANCELAR PLAN INSTITUCIONAL {contract_number}"
+            ),
+            server_time=now,
+            seconds_remaining=remaining,
+            events=[
+                InstitutionalTestPlanEventResponse.from_domain(event)
                 for event in events
             ],
         )
@@ -565,6 +751,14 @@ class BatchContractExecutionPreflightResponse(BaseModel):
     authorization_expires_at: datetime | None
     authorization_required_confirmation: str | None
     authorization_ttl_seconds: int | None
+    institutional_plan_required: bool
+    institutional_plan_id: UUID | None
+    institutional_plan_status: InstitutionalTestPlanStatus | None
+    institutional_plan_expires_at: datetime | None
+    institutional_plan_diagnostic_checked_at: datetime | None
+    institutional_plan_ready: bool
+    institutional_plan_required_confirmation: str | None
+    institutional_plan_window_seconds: int | None
     batch_status: str
     item_status: str
     required_confirmation: str
@@ -613,6 +807,26 @@ class BatchContractExecutionPreflightResponse(BaseModel):
             ),
             authorization_ttl_seconds=(
                 preflight.authorization_ttl_seconds
+            ),
+            institutional_plan_required=(
+                preflight.institutional_plan_required
+            ),
+            institutional_plan_id=preflight.institutional_plan_id,
+            institutional_plan_status=(
+                preflight.institutional_plan_status
+            ),
+            institutional_plan_expires_at=(
+                preflight.institutional_plan_expires_at
+            ),
+            institutional_plan_diagnostic_checked_at=(
+                preflight.institutional_plan_diagnostic_checked_at
+            ),
+            institutional_plan_ready=preflight.institutional_plan_ready,
+            institutional_plan_required_confirmation=(
+                preflight.institutional_plan_required_confirmation
+            ),
+            institutional_plan_window_seconds=(
+                preflight.institutional_plan_window_seconds
             ),
             batch_status=preflight.batch.status.value,
             item_status=preflight.item.status.value,
@@ -676,6 +890,8 @@ class BatchContractExecutionResponse(BaseModel):
     evidence_count: int
     authorization_id: UUID | None
     authorization_consumed_at: datetime | None
+    institutional_plan_id: UUID | None
+    institutional_plan_consumed_at: datetime | None
     batch_status: str
     item_status: str
     required_confirmation: str
@@ -714,6 +930,10 @@ class BatchContractExecutionResponse(BaseModel):
             authorization_id=result.authorization_id,
             authorization_consumed_at=(
                 result.authorization_consumed_at
+            ),
+            institutional_plan_id=result.institutional_plan_id,
+            institutional_plan_consumed_at=(
+                result.institutional_plan_consumed_at
             ),
             batch_status=result.batch_status.value,
             item_status=result.item_status.value,

@@ -38,6 +38,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useEffect, useMemo, useState } from "react";
+import InstitutionalTestPlanPanel from "./InstitutionalTestPlanPanel";
 import {
   applyContractExecutionToBatch,
   authorizationRemainingSeconds,
@@ -312,6 +313,7 @@ function BatchContractExecutionPanel({
   const [authorizationTokens, setAuthorizationTokens] = useState({});
   const [authorizingItemId, setAuthorizingItemId] = useState(null);
   const [revokingItemId, setRevokingItemId] = useState(null);
+  const [institutionalPlans, setInstitutionalPlans] = useState({});
 
   const contracts = batch?.contracts ?? [];
   const isSuperuser = user?.role === "SUPERUSER";
@@ -329,6 +331,9 @@ function BatchContractExecutionPanel({
     : null;
   const selectedAuthorizationToken = dialogItem
     ? authorizationTokens[dialogItem.item_id]
+    : null;
+  const selectedInstitutionalPlan = dialogItem
+    ? institutionalPlans[dialogItem.item_id]
     : null;
   const modeMeta =
     EXECUTION_MODES[executionMode] ?? EXECUTION_MODES.DRY_RUN;
@@ -383,6 +388,9 @@ function BatchContractExecutionPanel({
         confirmation,
         authorizationToken: selectedAuthorizationToken,
         authorizationExpiresAt: selectedAuthorizationExpiresAt,
+        institutionalPlanId: selectedInstitutionalPlan?.available
+          ? selectedInstitutionalPlan.plan_id
+          : null,
         now: authorizationClock,
       }),
     [
@@ -391,6 +399,7 @@ function BatchContractExecutionPanel({
       executionMode,
       selectedAuthorizationExpiresAt,
       selectedAuthorizationToken,
+      selectedInstitutionalPlan,
       selectedPreflight,
     ],
   );
@@ -447,6 +456,7 @@ function BatchContractExecutionPanel({
     setEvidences({});
     setAuthorizations({});
     setAuthorizationTokens({});
+    setInstitutionalPlans({});
     setDialogItem(null);
     setConfirmation("");
     setAuthorizationConfirmation("");
@@ -715,6 +725,10 @@ function BatchContractExecutionPanel({
         authorizationToken:
           executionMode === "REAL"
             ? selectedAuthorizationToken
+            : null,
+        institutionalPlanId:
+          executionMode === "REAL"
+            ? selectedInstitutionalPlan?.plan_id ?? null
             : null,
       });
       publishResult(result);
@@ -1069,6 +1083,22 @@ function BatchContractExecutionPanel({
                       institucional en el servidor.
                     </Alert>
                   )}
+
+                {executionMode === "REAL" && dialogItem && (
+                  <InstitutionalTestPlanPanel
+                    batchId={batch.batch_id}
+                    item={dialogItem}
+                    disabled={Boolean(busyItemId)}
+                    onPlanChange={(plan) => {
+                      setInstitutionalPlans((current) => ({
+                        ...current,
+                        [dialogItem.item_id]: plan,
+                      }));
+                      loadPreflight(dialogItem, { openDialog: false });
+                    }}
+                    onNotify={onNotify}
+                  />
+                )}
 
                 {executionMode === "REAL" && (
                     <Paper

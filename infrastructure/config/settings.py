@@ -92,6 +92,17 @@ class Settings(BaseSettings):
         ge=60,
         le=1800,
     )
+    institutional_test_plan_enabled: bool = False
+    institutional_test_plan_window_seconds: int = Field(
+        default=900,
+        ge=300,
+        le=7200,
+    )
+    institutional_test_plan_diagnostic_max_age_seconds: int = Field(
+        default=300,
+        ge=60,
+        le=1800,
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod

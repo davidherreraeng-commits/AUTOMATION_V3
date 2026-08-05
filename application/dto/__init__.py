@@ -44,6 +44,10 @@ from application.dto.step_execution import (
     StepExecutionResult,
 )
 
+from application.dto.institutional_test_plan import (
+    InstitutionalTestPlan,
+    InstitutionalTestPlanEvent,
+)
 __all__ = [
     "IssuedRealWriteAuthorization",
     "RealWriteAuthorization",
@@ -77,4 +81,6 @@ __all__ = [
     "BatchContractAvailabilityLinkProbeOutcome",
     "BatchContractBudgetRegisterLinkProbeOutcome",
     "BatchContractAdditionalDatesLinkProbeOutcome",
+    "InstitutionalTestPlan",
+    "InstitutionalTestPlanEvent",
 ]

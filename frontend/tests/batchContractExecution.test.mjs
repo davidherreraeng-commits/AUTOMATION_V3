@@ -109,6 +109,7 @@ test("la escritura real exige un token temporal en memoria", () => {
   const preflight = {
     can_execute: true,
     required_confirmation: "EJECUTAR CONTRATO 70-2026",
+    institutional_plan_ready: true,
   };
 
   assert.equal(
@@ -126,6 +127,7 @@ test("la escritura real exige un token temporal en memoria", () => {
       mode: "REAL",
       confirmation: "EJECUTAR CONTRATO 70-2026",
       authorizationToken: "token-temporal",
+      institutionalPlanId: "plan-1",
     }),
     true,
   );
@@ -168,6 +170,7 @@ test("la escritura real rechaza un token vencido en memoria", () => {
   const preflight = {
     can_execute: true,
     required_confirmation: "EJECUTAR CONTRATO 70-2026",
+    institutional_plan_ready: true,
   };
   const now = new Date("2026-08-04T18:00:00Z").getTime();
 
@@ -178,6 +181,7 @@ test("la escritura real rechaza un token vencido en memoria", () => {
       confirmation: "EJECUTAR CONTRATO 70-2026",
       authorizationToken: "token-temporal",
       authorizationExpiresAt: "2026-08-04T17:59:59Z",
+      institutionalPlanId: "plan-1",
       now,
     }),
     false,
@@ -189,9 +193,45 @@ test("la escritura real rechaza un token vencido en memoria", () => {
       confirmation: "EJECUTAR CONTRATO 70-2026",
       authorizationToken: "token-temporal",
       authorizationExpiresAt: "2026-08-04T18:00:30Z",
+      institutionalPlanId: "plan-1",
       now,
     }),
     true,
   );
 });
 
+
+test("la escritura real exige un plan institucional armado", () => {
+  const base = {
+    can_execute: true,
+    required_confirmation: "EJECUTAR CONTRATO 70-2026",
+  };
+
+  assert.equal(
+    canSubmitContractExecution({
+      preflight: {
+        ...base,
+        institutional_plan_ready: false,
+      },
+      mode: "REAL",
+      confirmation: base.required_confirmation,
+      authorizationToken: "token-temporal",
+      institutionalPlanId: "plan-1",
+    }),
+    false,
+  );
+
+  assert.equal(
+    canSubmitContractExecution({
+      preflight: {
+        ...base,
+        institutional_plan_ready: true,
+      },
+      mode: "REAL",
+      confirmation: base.required_confirmation,
+      authorizationToken: "token-temporal",
+      institutionalPlanId: null,
+    }),
+    false,
+  );
+});

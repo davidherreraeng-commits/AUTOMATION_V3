@@ -7,10 +7,12 @@ import pytest
 
 from adapters.persistence.sqlite import (
     BASELINE_MIGRATION_ID,
+    INSTITUTIONAL_PLAN_MIGRATION_ID,
     SQLiteBatchRepository,
     SQLiteDatabaseBootstrapper,
     SQLiteDatabaseIntegrityError,
     SQLiteExecutionRepository,
+    SQLiteInstitutionalTestPlanRepository,
     SQLitePortalCredentialRepository,
     SQLiteRealWriteAuthorizationRepository,
     SQLiteUserRepository,
@@ -27,7 +29,8 @@ def repositories(database_path: Path):
         auto_initialize=False,
     )
     authorizations = SQLiteRealWriteAuthorizationRepository(database_path)
-    return users, credentials, batches, executions, authorizations
+    plans = SQLiteInstitutionalTestPlanRepository(database_path)
+    return users, credentials, batches, executions, authorizations, plans
 
 
 def initialize(database_path: Path, backup_directory: Path):
@@ -51,7 +54,10 @@ def test_should_create_complete_database_from_empty_path(
     assert database_path.is_file()
     assert report.created_database is True
     assert report.migration_applied is True
-    assert report.applied_migrations == (BASELINE_MIGRATION_ID,)
+    assert report.applied_migrations == (
+        BASELINE_MIGRATION_ID,
+        INSTITUTIONAL_PLAN_MIGRATION_ID,
+    )
     assert report.backup_path is None
     assert "users" in report.tables
     assert "real_write_authorizations" in report.tables
@@ -116,7 +122,7 @@ def test_should_record_migration_once(
     initialize(database_path, tmp_path / "backups")
 
     with sqlite3.connect(database_path) as connection:
-        count = connection.execute(
+        baseline_count = connection.execute(
             """
             SELECT COUNT(*)
               FROM rpa_schema_migrations
@@ -124,12 +130,21 @@ def test_should_record_migration_once(
             """,
             (BASELINE_MIGRATION_ID,),
         ).fetchone()[0]
+        plan_count = connection.execute(
+            """
+            SELECT COUNT(*)
+              FROM rpa_schema_migrations
+             WHERE migration_id = ?
+            """,
+            (INSTITUTIONAL_PLAN_MIGRATION_ID,),
+        ).fetchone()[0]
         version = connection.execute(
             "PRAGMA user_version"
         ).fetchone()[0]
 
-    assert count == 1
-    assert version == 1
+    assert baseline_count == 1
+    assert plan_count == 1
+    assert version == 2
 
 
 def test_should_reject_corrupted_database_without_overwriting_it(

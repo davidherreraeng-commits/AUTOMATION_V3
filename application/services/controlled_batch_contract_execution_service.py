@@ -29,11 +29,15 @@ from application.services.batch_contract_execution_service import (
 from application.services.real_write_authorization_service import (
     RealWriteAuthorizationService,
 )
+from application.services.institutional_test_plan_service import (
+    InstitutionalTestPlanService,
+)
 from domain.enums import (
     ContractStep,
     ExecutionMode,
     ExecutionStatus,
     RealWriteAuthorizationStatus,
+    InstitutionalTestPlanStatus,
 )
 from domain.errors.batch_contract_execution_errors import (
     BatchContractExecutionBlockedError,
@@ -47,6 +51,10 @@ from domain.errors.execution_evidence_errors import (
 from domain.errors.real_write_authorization_errors import (
     RealWriteAuthorizationError,
 )
+from domain.errors.institutional_test_plan_errors import (
+    InstitutionalTestPlanError,
+    InstitutionalTestPlanNotFoundError,
+)
 from domain.models import ContractExecution
 
 
@@ -59,6 +67,19 @@ class ControlledBatchContractExecutionService:
             "REAL_WRITE_AUTHORIZATION_EXPIRED",
             "REAL_WRITE_AUTHORIZATION_ALREADY_CONSUMED",
             "REAL_WRITE_AUTHORIZATION_REVOKED",
+        }
+    )
+
+    INSTITUTIONAL_PLAN_ISSUE_CODES = frozenset(
+        {
+            "INSTITUTIONAL_TEST_PLAN_REQUIRED",
+            "INSTITUTIONAL_TEST_PLAN_NOT_ARMED",
+            "INSTITUTIONAL_TEST_PLAN_DIAGNOSTIC_REQUIRED",
+            "INSTITUTIONAL_TEST_PLAN_DRAFT",
+            "INSTITUTIONAL_TEST_PLAN_READY",
+            "INSTITUTIONAL_TEST_PLAN_CANCELLED",
+            "INSTITUTIONAL_TEST_PLAN_CONSUMED",
+            "INSTITUTIONAL_TEST_PLAN_EXPIRED",
         }
     )
 
@@ -85,12 +106,14 @@ class ControlledBatchContractExecutionService:
         evidence: ExecutionEvidenceRepository,
         real_write_enabled: bool,
         authorizations: RealWriteAuthorizationService,
+        institutional_plans: InstitutionalTestPlanService | None = None,
     ) -> None:
         self._real = real_service
         self._dry_run = dry_run_executor
         self._evidence = evidence
         self._real_write_enabled = bool(real_write_enabled)
         self._authorizations = authorizations
+        self._institutional_plans = institutional_plans
         self._simulation_lock = Lock()
         self._active_simulations: set[tuple[UUID, UUID]] = set()
 
@@ -127,6 +150,19 @@ class ControlledBatchContractExecutionService:
                 if actor_username
                 else None
             )
+            institutional_plan = (
+                self._institutional_plans.get_latest(
+                    batch_id=batch_id,
+                    item_id=item_id,
+                    dependency=dependency,
+                    actor_username=actor_username,
+                    actor_user_id=actor_user_id,
+                )
+                if self._institutional_plans is not None
+                and self._institutional_plans.enabled
+                and actor_username
+                else None
+            )
             issues = list(base.issues)
             if self._real_write_enabled:
                 authorization_issue = self._authorization_issue(
@@ -134,6 +170,22 @@ class ControlledBatchContractExecutionService:
                 )
                 if authorization_issue is not None:
                     issues.append(authorization_issue)
+                if (
+                    self._institutional_plans is not None
+                    and self._institutional_plans.enabled
+                ):
+                    plan_issue = (
+                        self._institutional_plans.issue_for_preflight(
+                            institutional_plan
+                        )
+                    )
+                    if plan_issue is not None:
+                        issues.append(
+                            BatchContractExecutionIssue(
+                                code=plan_issue[0],
+                                message=plan_issue[1],
+                            )
+                        )
 
             return replace(
                 base,
@@ -174,6 +226,50 @@ class ControlledBatchContractExecutionService:
                 ),
                 authorization_ttl_seconds=(
                     self._authorizations.ttl_seconds
+                ),
+                institutional_plan_required=(
+                    self._institutional_plans is not None
+                    and self._institutional_plans.enabled
+                ),
+                institutional_plan_id=(
+                    institutional_plan.plan_id
+                    if institutional_plan is not None
+                    else None
+                ),
+                institutional_plan_status=(
+                    institutional_plan.status
+                    if institutional_plan is not None
+                    else None
+                ),
+                institutional_plan_expires_at=(
+                    institutional_plan.expires_at
+                    if institutional_plan is not None
+                    else None
+                ),
+                institutional_plan_diagnostic_checked_at=(
+                    institutional_plan.diagnostic_checked_at
+                    if institutional_plan is not None
+                    else None
+                ),
+                institutional_plan_ready=(
+                    institutional_plan is not None
+                    and institutional_plan.status
+                    is InstitutionalTestPlanStatus.ARMED
+                ),
+                institutional_plan_required_confirmation=(
+                    self._institutional_plans
+                    .required_create_confirmation(
+                        base.item.contract.contract_number
+                    )
+                    if self._institutional_plans is not None
+                    and self._institutional_plans.enabled
+                    else None
+                ),
+                institutional_plan_window_seconds=(
+                    self._institutional_plans.window_seconds
+                    if self._institutional_plans is not None
+                    and self._institutional_plans.enabled
+                    else None
                 ),
             )
 
@@ -346,6 +442,7 @@ class ControlledBatchContractExecutionService:
         mode: ExecutionMode = ExecutionMode.DRY_RUN,
         execution_id: UUID | None = None,
         authorization_token: str | None = None,
+        institutional_plan_id: UUID | None = None,
     ) -> BatchContractExecutionResult:
         selected_mode = ExecutionMode(mode)
         preflight = self.preflight(
@@ -383,6 +480,17 @@ class ControlledBatchContractExecutionService:
                 actor_user_id=actor_user_id,
             )
 
+        if (
+            self._institutional_plans is not None
+            and self._institutional_plans.enabled
+        ):
+            if (
+                institutional_plan_id is None
+                or institutional_plan_id
+                != preflight.institutional_plan_id
+            ):
+                raise InstitutionalTestPlanNotFoundError()
+
         try:
             authorization = self._authorizations.consume(
                 token=authorization_token,
@@ -409,6 +517,41 @@ class ControlledBatchContractExecutionService:
                 },
             )
             raise
+
+        institutional_plan = None
+        if (
+            self._institutional_plans is not None
+            and self._institutional_plans.enabled
+        ):
+            try:
+                institutional_plan = self._institutional_plans.consume(
+                    plan_id=institutional_plan_id,
+                    batch_id=batch_id,
+                    item_id=item_id,
+                    contract_number=(
+                        preflight.item.contract.contract_number
+                    ),
+                    dependency=preflight.batch.dependency,
+                    actor_username=actor_username,
+                    actor_user_id=actor_user_id,
+                    correlation_id=correlation_id,
+                )
+            except InstitutionalTestPlanError as error:
+                self._save_failure(
+                    preflight=preflight,
+                    correlation_id=correlation_id,
+                    started_at=started_at,
+                    actor_username=actor_username,
+                    actor_user_id=actor_user_id,
+                    error=error,
+                    authorization=authorization,
+                    event_outcome="INSTITUTIONAL_PLAN_REJECTED",
+                    event_metadata={
+                        "institutional_plan_code": error.code,
+                        "writes_to_portal": False,
+                    },
+                )
+                raise
 
         try:
             result = self._real.execute(
@@ -448,6 +591,16 @@ class ControlledBatchContractExecutionService:
             evidence_count=evidence.evidence_count,
             authorization_id=authorization.authorization_id,
             authorization_consumed_at=authorization.consumed_at,
+            institutional_plan_id=(
+                institutional_plan.plan_id
+                if institutional_plan is not None
+                else None
+            ),
+            institutional_plan_consumed_at=(
+                institutional_plan.consumed_at
+                if institutional_plan is not None
+                else None
+            ),
         )
 
     def status(

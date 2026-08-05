@@ -86,6 +86,7 @@ export async function executeSelectedContract({
   executionId = null,
   mode = "DRY_RUN",
   authorizationToken = null,
+  institutionalPlanId = null,
 }) {
   const response = await api.post(
     `/batches/${batchId}/contracts/${itemId}/execution`,
@@ -94,10 +95,72 @@ export async function executeSelectedContract({
       execution_id: executionId,
       mode,
       authorization_token: authorizationToken,
+      institutional_plan_id: institutionalPlanId,
     },
     {
       timeout: CONTRACT_EXECUTION_TIMEOUT_MS,
     },
+  );
+  return response.data;
+}
+
+export async function getInstitutionalTestPlan({
+  batchId,
+  itemId,
+}) {
+  const response = await api.get(
+    `/batches/${batchId}/contracts/${itemId}/execution/institutional-plan`,
+  );
+  return response.data;
+}
+
+export async function createInstitutionalTestPlan({
+  batchId,
+  itemId,
+  confirmation,
+}) {
+  const response = await api.post(
+    `/batches/${batchId}/contracts/${itemId}/execution/institutional-plan`,
+    { confirmation },
+  );
+  return response.data;
+}
+
+export async function diagnoseInstitutionalTestPlan({
+  batchId,
+  itemId,
+  planId,
+}) {
+  const response = await api.post(
+    `/batches/${batchId}/contracts/${itemId}/execution/institutional-plan/diagnostic`,
+    { plan_id: planId },
+    { timeout: CONTRACT_EXECUTION_TIMEOUT_MS },
+  );
+  return response.data;
+}
+
+export async function armInstitutionalTestPlan({
+  batchId,
+  itemId,
+  planId,
+  confirmation,
+}) {
+  const response = await api.post(
+    `/batches/${batchId}/contracts/${itemId}/execution/institutional-plan/arm`,
+    { plan_id: planId, confirmation },
+  );
+  return response.data;
+}
+
+export async function cancelInstitutionalTestPlan({
+  batchId,
+  itemId,
+  planId,
+  confirmation,
+}) {
+  const response = await api.delete(
+    `/batches/${batchId}/contracts/${itemId}/execution/institutional-plan`,
+    { data: { plan_id: planId, confirmation } },
   );
   return response.data;
 }

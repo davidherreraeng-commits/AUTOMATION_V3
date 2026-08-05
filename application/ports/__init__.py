@@ -39,6 +39,9 @@ from application.ports.execution_repository import (
     ExecutionRepositoryError,
 )
 
+from application.ports.institutional_test_plan_repository import (
+    InstitutionalTestPlanRepository,
+)
 __all__ = [
     "RealWriteAuthorizationRepository",
     "ContractExecutor",
@@ -68,4 +71,5 @@ __all__ = [
     "BatchContractAvailabilityLinkProbeResult",
     "BatchContractBudgetRegisterLinkProbeResult",
     "BatchContractAdditionalDatesLinkProbeResult",
+    "InstitutionalTestPlanRepository",
 ]

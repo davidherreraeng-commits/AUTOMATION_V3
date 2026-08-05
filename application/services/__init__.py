@@ -20,6 +20,9 @@ from application.services.portal_credential_service import (
 )
 from application.services.user_management_service import UserManagementService
 
+from application.services.institutional_test_plan_service import (
+    InstitutionalTestPlanService,
+)
 __all__ = [
     "RealWriteAuthorizationService",
     "BatchContractExecutionService",
@@ -31,4 +34,5 @@ __all__ = [
     "PortalCredentialStatus",
     "PortalCredentialTestOutcome",
     "UserManagementService",
+    "InstitutionalTestPlanService",
 ]

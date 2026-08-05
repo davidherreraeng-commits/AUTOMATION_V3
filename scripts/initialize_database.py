@@ -7,6 +7,7 @@ from adapters.persistence.sqlite import (
     SQLiteBatchRepository,
     SQLiteDatabaseBootstrapper,
     SQLiteExecutionRepository,
+    SQLiteInstitutionalTestPlanRepository,
     SQLitePortalCredentialRepository,
     SQLiteRealWriteAuthorizationRepository,
     SQLiteUserRepository,
@@ -63,6 +64,7 @@ def main() -> int:
         auto_initialize=False,
     )
     authorizations = SQLiteRealWriteAuthorizationRepository(database_path)
+    institutional_plans = SQLiteInstitutionalTestPlanRepository(database_path)
 
     report = SQLiteDatabaseBootstrapper(
         database_path,
@@ -75,6 +77,7 @@ def main() -> int:
             batches.initialize,
             executions.initialize,
             authorizations.initialize,
+            institutional_plans.initialize,
         )
     )
 

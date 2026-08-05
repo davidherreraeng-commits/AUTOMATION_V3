@@ -25,6 +25,9 @@ from application.services.batch_creation_service import BatchCreationService
 from application.services.batch_portal_probe_service import (
     BatchPortalProbeService,
 )
+from application.services.institutional_test_plan_service import (
+    InstitutionalTestPlanService,
+)
 from application.services.portal_credential_service import (
     PortalCredentialService,
 )
@@ -84,6 +87,12 @@ def get_batch_portal_probe_service(
     request: Request,
 ) -> BatchPortalProbeService:
     return request.app.state.batch_portal_probe_service
+
+
+def get_institutional_test_plan_service(
+    request: Request,
+) -> InstitutionalTestPlanService:
+    return request.app.state.institutional_test_plan_service
 
 
 def get_batch_creation_service(

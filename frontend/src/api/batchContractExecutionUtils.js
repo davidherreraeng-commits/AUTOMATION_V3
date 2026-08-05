@@ -40,6 +40,7 @@ export function canSubmitContractExecution({
   confirmation,
   authorizationToken = null,
   authorizationExpiresAt = null,
+  institutionalPlanId = null,
   now = Date.now(),
 }) {
   if (!preflight?.can_execute) return false;
@@ -59,6 +60,12 @@ export function canSubmitContractExecution({
       authorizationExpiresAt &&
       authorizationRemainingSeconds(authorizationExpiresAt, now) <= 0
     ) {
+      return false;
+    }
+    if (!String(institutionalPlanId ?? "").trim()) {
+      return false;
+    }
+    if (preflight.institutional_plan_ready !== true) {
       return false;
     }
   }
@@ -82,4 +89,3 @@ export function formatAuthorizationCountdown(seconds) {
   const remainder = value % 60;
   return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
-
