@@ -160,3 +160,75 @@ def test_should_reject_context_and_expire_window(tmp_path) -> None:
             now=now + timedelta(seconds=2),
             diagnostic_not_before=now,
         )
+
+def test_armed_plan_should_expire_without_execution(tmp_path) -> None:
+    repository = SQLiteInstitutionalTestPlanRepository(
+        tmp_path / "rpa.sqlite3"
+    )
+    repository.initialize()
+    now = datetime.now(UTC)
+    plan = make_plan(now)
+    short_plan = InstitutionalTestPlan(
+        plan_id=plan.plan_id,
+        batch_id=plan.batch_id,
+        item_id=plan.item_id,
+        contract_number=plan.contract_number,
+        dependency=plan.dependency,
+        actor_username=plan.actor_username,
+        actor_user_id=plan.actor_user_id,
+        status=plan.status,
+        created_at=plan.created_at,
+        starts_at=plan.starts_at,
+        expires_at=now + timedelta(seconds=30),
+    )
+    created = repository.create(short_plan)
+    repository.record_diagnostic(
+        plan_id=created.plan_id,
+        batch_id=created.batch_id,
+        item_id=created.item_id,
+        contract_number=created.contract_number,
+        dependency=created.dependency,
+        actor_username=created.actor_username,
+        actor_user_id=created.actor_user_id,
+        checked_at=now + timedelta(seconds=5),
+        success=True,
+        code="PORTAL_READY",
+        message="Acceso read-only confirmado.",
+        authenticated=True,
+        contracting_menu_found=True,
+        enter_contract_found=True,
+        assistant_access_found=True,
+        duration_ms=250,
+    )
+    armed = repository.arm(
+        plan_id=created.plan_id,
+        batch_id=created.batch_id,
+        item_id=created.item_id,
+        contract_number=created.contract_number,
+        dependency=created.dependency,
+        actor_username=created.actor_username,
+        actor_user_id=created.actor_user_id,
+        now=now + timedelta(seconds=10),
+        diagnostic_not_before=now,
+    )
+    assert armed.status is InstitutionalTestPlanStatus.ARMED
+
+    latest = repository.get_latest(
+        batch_id=created.batch_id,
+        item_id=created.item_id,
+        actor_username=created.actor_username,
+        actor_user_id=created.actor_user_id,
+        now=now + timedelta(seconds=31),
+    )
+    assert latest is not None
+    assert latest.status is InstitutionalTestPlanStatus.EXPIRED
+    assert latest.execution_count == 0
+    assert {
+        event.event_type
+        for event in repository.list_events(
+            batch_id=created.batch_id,
+            item_id=created.item_id,
+            plan_id=created.plan_id,
+        )
+    } >= {"ARMED", "EXPIRED"}
+

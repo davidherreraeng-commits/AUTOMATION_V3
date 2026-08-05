@@ -205,11 +205,19 @@ export default function InstitutionalTestPlanPanel({
           </Alert>
         )}
 
-        <Alert severity={armed ? "success" : "info"} variant="outlined">
+        <Alert severity={armed ? "warning" : "info"} variant="outlined">
           {armed
-            ? "El plan está armado para este único contrato. Aún se requieren la autorización temporal y las barreras institucionales del servidor."
+            ? "PLAN ARMADO — EJECUCIÓN REAL BLOQUEADA. El armado no emite token ni inicia Selenium contractual."
             : "El plan no habilita por sí solo ninguna escritura. Primero debe superar el diagnóstico read-only y luego armarse."}
         </Alert>
+
+        {plan?.status === "READY" && plan?.arming_enabled !== true && (
+          <Alert severity="warning">
+            El armado institucional está deshabilitado en el servidor. El
+            diagnóstico permanece válido, pero este plan no puede pasar a
+            ARMED.
+          </Alert>
+        )}
 
         {plan?.expires_at && (
           <Stack direction="row" spacing={1} alignItems="center">
@@ -321,14 +329,19 @@ export default function InstitutionalTestPlanPanel({
                   label="Confirmación para armar"
                   value={armConfirmation}
                   onChange={(event) => setArmConfirmation(event.target.value)}
-                  disabled={loading || disabled}
+                  disabled={loading || disabled || plan?.arming_enabled !== true}
                 />
                 <Box>
                   <Button
                     variant="contained"
                     color="warning"
                     startIcon={<LockOpenOutlinedIcon />}
-                    disabled={!armValid || loading || disabled}
+                    disabled={
+                      !armValid ||
+                      loading ||
+                      disabled ||
+                      plan?.arming_enabled !== true
+                    }
                     onClick={() =>
                       run(
                         () =>

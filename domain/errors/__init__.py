@@ -68,6 +68,7 @@ from domain.errors.portal_errors import (
 )
 
 from domain.errors.institutional_test_plan_errors import (
+    InstitutionalTestPlanArmingDisabledError,
     InstitutionalTestPlanCancelledError,
     InstitutionalTestPlanConfirmationError,
     InstitutionalTestPlanConsumedError,
@@ -134,6 +135,7 @@ __all__ = [
     "PortalValidationError",
     "UnsafeFileNameError",
     "UnsupportedFileExtensionError",
+    "InstitutionalTestPlanArmingDisabledError",
     "InstitutionalTestPlanCancelledError",
     "InstitutionalTestPlanConfirmationError",
     "InstitutionalTestPlanConsumedError",

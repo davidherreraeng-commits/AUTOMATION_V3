@@ -110,6 +110,7 @@ def settings(tmp_path: Path) -> Settings:
         cookie_secure=False,
         batch_execution_enabled=True,
         institutional_test_plan_enabled=True,
+        institutional_test_plan_arming_enabled=True,
     )
 
 
@@ -221,6 +222,8 @@ def test_should_create_diagnose_arm_and_cancel_plan(
         assert initial.status_code == 200
         assert initial.json()["plan_id"] is None
         assert initial.json()["enabled"] is True
+        assert initial.json()["arming_enabled"] is True
+        assert initial.json()["execution_enabled_by_plan"] is False
 
         created = client.post(
             endpoint,
@@ -253,6 +256,7 @@ def test_should_create_diagnose_arm_and_cancel_plan(
         assert armed.status_code == 200
         assert armed.json()["status"] == "ARMED"
         assert armed.json()["available"] is True
+        assert armed.json()["execution_enabled_by_plan"] is False
 
         execution_endpoint = (
             f"/api/v1/batches/{batch['batch_id']}/contracts/"
@@ -350,3 +354,58 @@ def test_status_and_creation_should_allow_read_only_preparation_blockers(
         assert "credenciales expiró" in (
             diagnostic.json()["detail"]["message"]
         )
+
+def test_armed_plan_should_not_execute_when_real_write_barriers_are_off(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("RPA_REAL_WRITE_AUTHORIZATION", raising=False)
+    probe = FakeReadOnlyProbe()
+    executor = FakeContractExecutor()
+    app = create_app(
+        settings(tmp_path),
+        portal_credential_verifier=FakeVerifier(),
+        batch_portal_probe=probe,
+        contract_executor=executor,
+    )
+
+    with TestClient(app) as client:
+        batch, item, endpoint = prepare(client, app)
+        created = client.post(
+            endpoint,
+            json={
+                "confirmation": "CREAR PLAN INSTITUCIONAL 70-2026"
+            },
+        )
+        plan_id = created.json()["plan_id"]
+        assert client.post(
+            f"{endpoint}/diagnostic",
+            json={"plan_id": plan_id},
+        ).status_code == 200
+        armed = client.post(
+            f"{endpoint}/arm",
+            json={
+                "plan_id": plan_id,
+                "confirmation": "ARMAR PRUEBA INSTITUCIONAL 70-2026",
+            },
+        )
+        assert armed.status_code == 200
+        assert armed.json()["status"] == "ARMED"
+
+        execute_endpoint = (
+            f"/api/v1/batches/{batch['batch_id']}/contracts/"
+            f"{item['item_id']}/execution"
+        )
+        blocked = client.post(
+            execute_endpoint,
+            json={
+                "mode": "REAL",
+                "confirmation": "EJECUTAR CONTRATO 70-2026",
+                "authorization_token": "token-no-emitido",
+                "institutional_plan_id": plan_id,
+            },
+        )
+        assert blocked.status_code == 409
+        detail = blocked.json()["detail"]
+        assert "EXECUTION_DISABLED" in str(detail)
+

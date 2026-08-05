@@ -284,6 +284,9 @@ def create_app(
             executions=real_contract_execution_service,
             portal_probe=batch_portal_probe_service,
             enabled=resolved_settings.institutional_test_plan_enabled,
+            arming_enabled=(
+                resolved_settings.institutional_test_plan_arming_enabled
+            ),
             window_seconds=(
                 resolved_settings.institutional_test_plan_window_seconds
             ),

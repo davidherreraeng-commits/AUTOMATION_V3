@@ -349,6 +349,8 @@ class InstitutionalTestPlanEventResponse(BaseModel):
 class InstitutionalTestPlanResponse(BaseModel):
     available: bool
     enabled: bool
+    arming_enabled: bool
+    execution_enabled_by_plan: bool
     plan_id: UUID | None
     batch_id: UUID
     item_id: UUID
@@ -389,6 +391,7 @@ class InstitutionalTestPlanResponse(BaseModel):
         plan: InstitutionalTestPlan | None,
         events: tuple[InstitutionalTestPlanEvent, ...],
         enabled: bool,
+        arming_enabled: bool,
         batch_id: UUID,
         item_id: UUID,
         contract_number: str,
@@ -412,6 +415,8 @@ class InstitutionalTestPlanResponse(BaseModel):
                 and remaining > 0
             ),
             enabled=bool(enabled),
+            arming_enabled=bool(arming_enabled),
+            execution_enabled_by_plan=False,
             plan_id=plan.plan_id if plan is not None else None,
             batch_id=batch_id,
             item_id=item_id,

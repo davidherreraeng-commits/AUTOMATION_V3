@@ -21,6 +21,7 @@ from domain.errors.institutional_test_plan_errors import (
     InstitutionalTestPlanContextError,
     InstitutionalTestPlanDiagnosticExpiredError,
     InstitutionalTestPlanDiagnosticRequiredError,
+    InstitutionalTestPlanError,
     InstitutionalTestPlanExpiredError,
     InstitutionalTestPlanNotArmedError,
     InstitutionalTestPlanNotFoundError,
@@ -428,6 +429,61 @@ class SQLiteInstitutionalTestPlanRepository:
                 recorded_at=now,
                 metadata={"max_executions": 1},
             )
+        return self._require_by_id(plan_id)
+
+    def record_rejection(
+        self,
+        *,
+        plan_id: UUID,
+        batch_id: UUID,
+        item_id: UUID,
+        contract_number: str,
+        dependency: str,
+        actor_username: str,
+        actor_user_id: int | None,
+        now: datetime,
+        reason: str,
+        code: str,
+        message: str,
+    ) -> InstitutionalTestPlan:
+        try:
+            with self._transaction() as connection:
+                row = self._require_context(
+                    connection,
+                    plan_id=plan_id,
+                    batch_id=batch_id,
+                    item_id=item_id,
+                    contract_number=contract_number,
+                    dependency=dependency,
+                    actor_username=actor_username,
+                    actor_user_id=actor_user_id,
+                    now=now,
+                )
+                self._insert_event(
+                    connection,
+                    plan_id=plan_id,
+                    event_type="ARM_REJECTED",
+                    batch_id=batch_id,
+                    item_id=item_id,
+                    contract_number=contract_number,
+                    dependency=dependency,
+                    actor_username=actor_username,
+                    actor_user_id=actor_user_id,
+                    recorded_at=now,
+                    reason=reason,
+                    metadata={
+                        "code": str(code).strip(),
+                        "message": str(message).strip(),
+                        "status": str(row["status"]),
+                        "writes_to_portal": False,
+                    },
+                )
+        except InstitutionalTestPlanError:
+            raise
+        except sqlite3.Error as error:
+            raise InstitutionalTestPlanRepositoryError(
+                "No fue posible auditar el rechazo del armado."
+            ) from error
         return self._require_by_id(plan_id)
 
     def consume(

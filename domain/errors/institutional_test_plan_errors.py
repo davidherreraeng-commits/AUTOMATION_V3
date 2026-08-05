@@ -21,6 +21,18 @@ class InstitutionalTestPlanDisabledError(InstitutionalTestPlanError):
         )
 
 
+class InstitutionalTestPlanArmingDisabledError(
+    InstitutionalTestPlanError
+):
+    code = "INSTITUTIONAL_TEST_PLAN_ARMING_DISABLED"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "El armado de planes institucionales está deshabilitado "
+            "en el servidor."
+        )
+
+
 class InstitutionalTestPlanNotFoundError(InstitutionalTestPlanError):
     code = "INSTITUTIONAL_TEST_PLAN_NOT_FOUND"
 

@@ -93,6 +93,7 @@ class Settings(BaseSettings):
         le=1800,
     )
     institutional_test_plan_enabled: bool = False
+    institutional_test_plan_arming_enabled: bool = False
     institutional_test_plan_window_seconds: int = Field(
         default=900,
         ge=300,

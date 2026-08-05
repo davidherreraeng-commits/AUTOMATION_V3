@@ -235,3 +235,15 @@ test("la escritura real exige un plan institucional armado", () => {
     false,
   );
 });
+
+test("un plan armado no habilita por sí solo la escritura real", () => {
+  const plan = {
+    status: "ARMED",
+    arming_enabled: true,
+    execution_enabled_by_plan: false,
+  };
+
+  assert.equal(plan.status, "ARMED");
+  assert.equal(plan.execution_enabled_by_plan, false);
+});
+

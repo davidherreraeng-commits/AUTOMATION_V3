@@ -24,6 +24,7 @@ from domain.errors.batch_contract_execution_errors import (
     BatchContractExecutionBlockedError,
 )
 from domain.errors.institutional_test_plan_errors import (
+    InstitutionalTestPlanArmingDisabledError,
     InstitutionalTestPlanConfirmationError,
     InstitutionalTestPlanDiagnosticExpiredError,
     InstitutionalTestPlanDiagnosticRequiredError,
@@ -62,6 +63,7 @@ class InstitutionalTestPlanService:
         executions: BatchContractExecutionService,
         portal_probe: BatchPortalProbeService,
         enabled: bool,
+        arming_enabled: bool = False,
         window_seconds: int = 900,
         diagnostic_max_age_seconds: int = 300,
         clock: Callable[[], datetime] | None = None,
@@ -82,6 +84,7 @@ class InstitutionalTestPlanService:
         self._executions = executions
         self._portal_probe = portal_probe
         self._enabled = bool(enabled)
+        self._arming_enabled = bool(arming_enabled)
         self._window_seconds = int(window_seconds)
         self._diagnostic_max_age_seconds = int(
             diagnostic_max_age_seconds
@@ -91,6 +94,10 @@ class InstitutionalTestPlanService:
     @property
     def enabled(self) -> bool:
         return self._enabled
+
+    @property
+    def arming_enabled(self) -> bool:
+        return self._arming_enabled
 
     @property
     def window_seconds(self) -> int:
@@ -261,15 +268,59 @@ class InstitutionalTestPlanService:
         confirmation: str,
     ) -> InstitutionalTestPlan:
         self._ensure_enabled()
-        base = self._prepare_contract(
+        base = self._load_contract_context(
             batch_id=batch_id,
             item_id=item_id,
             dependency=dependency,
         )
         contract_number = base.item.contract.contract_number
-        required = self.required_arm_confirmation(contract_number)
-        self._assert_confirmation(confirmation, required)
+        current = self._require_plan(
+            plan_id=plan_id,
+            batch_id=batch_id,
+            item_id=item_id,
+            actor_username=actor_username,
+            actor_user_id=actor_user_id,
+        )
         now = self._utc_now()
+
+        if not self._arming_enabled:
+            error = InstitutionalTestPlanArmingDisabledError()
+            self._record_arm_rejection(
+                plan=current,
+                now=now,
+                reason="ARMING_DISABLED",
+                error=error,
+            )
+            raise error
+
+        required = self.required_arm_confirmation(contract_number)
+        try:
+            self._assert_confirmation(confirmation, required)
+        except InstitutionalTestPlanConfirmationError as error:
+            self._record_arm_rejection(
+                plan=current,
+                now=now,
+                reason="CONFIRMATION_MISMATCH",
+                error=error,
+            )
+            raise
+
+        blocking = tuple(
+            (issue.code, issue.message)
+            for issue in base.issues
+            if issue.blocking
+            and issue.code not in self.PREPARATION_IGNORED_ISSUES
+        )
+        if blocking:
+            error = BatchContractExecutionBlockedError(blocking)
+            self._record_arm_rejection(
+                plan=current,
+                now=now,
+                reason="CONTRACT_SECURITY_BLOCK",
+                error=error,
+            )
+            raise error
+
         return self._repository.arm(
             plan_id=plan_id,
             batch_id=batch_id,
@@ -384,6 +435,28 @@ class InstitutionalTestPlanService:
         return self._repository.expire_due(
             now=self._utc_now(),
             limit=limit,
+        )
+
+    def _record_arm_rejection(
+        self,
+        *,
+        plan: InstitutionalTestPlan,
+        now: datetime,
+        reason: str,
+        error: Exception,
+    ) -> None:
+        self._repository.record_rejection(
+            plan_id=plan.plan_id,
+            batch_id=plan.batch_id,
+            item_id=plan.item_id,
+            contract_number=plan.contract_number,
+            dependency=plan.dependency,
+            actor_username=plan.actor_username,
+            actor_user_id=plan.actor_user_id,
+            now=now,
+            reason=reason,
+            code=getattr(error, "code", type(error).__name__),
+            message=str(error),
         )
 
     def _require_plan(

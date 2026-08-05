@@ -68,6 +68,23 @@ class InstitutionalTestPlanRepository(Protocol):
     ) -> InstitutionalTestPlan:
         ...
 
+    def record_rejection(
+        self,
+        *,
+        plan_id: UUID,
+        batch_id: UUID,
+        item_id: UUID,
+        contract_number: str,
+        dependency: str,
+        actor_username: str,
+        actor_user_id: int | None,
+        now: datetime,
+        reason: str,
+        code: str,
+        message: str,
+    ) -> InstitutionalTestPlan:
+        ...
+
     def consume(
         self,
         *,

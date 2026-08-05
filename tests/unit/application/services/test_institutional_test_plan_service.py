@@ -64,6 +64,7 @@ def test_should_create_diagnose_and_arm_plan(tmp_path) -> None:
         executions=FakeExecutionService(),
         portal_probe=probe,
         enabled=True,
+        arming_enabled=True,
         window_seconds=900,
         diagnostic_max_age_seconds=300,
     )
@@ -176,6 +177,7 @@ def test_read_only_plan_should_ignore_real_write_only_blockers(tmp_path) -> None
         executions=FakeExecutionService(issues),
         portal_probe=probe,
         enabled=True,
+        arming_enabled=True,
     )
     batch_id = uuid4()
     item_id = uuid4()
@@ -224,3 +226,61 @@ def test_read_only_plan_should_ignore_real_write_only_blockers(tmp_path) -> None
             confirmation="ARMAR PRUEBA INSTITUCIONAL 70-2026",
         )
     assert "valores de prueba" in str(captured.value)
+
+def test_arming_should_require_independent_server_flag_and_audit_rejection(
+    tmp_path,
+) -> None:
+    repository = SQLiteInstitutionalTestPlanRepository(
+        tmp_path / "rpa.sqlite3"
+    )
+    repository.initialize()
+    service = InstitutionalTestPlanService(
+        repository=repository,
+        executions=FakeExecutionService(),
+        portal_probe=FakePortalProbeService(),
+        enabled=True,
+        arming_enabled=False,
+    )
+    batch_id = uuid4()
+    item_id = uuid4()
+    created = service.create(
+        batch_id=batch_id,
+        item_id=item_id,
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+        confirmation="CREAR PLAN INSTITUCIONAL 70-2026",
+    )
+    ready = service.run_read_only_diagnostic(
+        plan_id=created.plan_id,
+        batch_id=batch_id,
+        item_id=item_id,
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+    )
+    assert ready.status is InstitutionalTestPlanStatus.READY
+
+    from domain.errors import InstitutionalTestPlanArmingDisabledError
+
+    with pytest.raises(InstitutionalTestPlanArmingDisabledError):
+        service.arm(
+            plan_id=created.plan_id,
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency="Adquisiciones",
+            actor_username="jefe",
+            actor_user_id=1,
+            confirmation="ARMAR PRUEBA INSTITUCIONAL 70-2026",
+        )
+
+    events = service.list_events(
+        batch_id=batch_id,
+        item_id=item_id,
+        plan_id=created.plan_id,
+    )
+    rejected = [event for event in events if event.event_type == "ARM_REJECTED"]
+    assert len(rejected) == 1
+    assert rejected[0].reason == "ARMING_DISABLED"
+    assert rejected[0].metadata["writes_to_portal"] is False
+
