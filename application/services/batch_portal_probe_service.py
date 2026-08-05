@@ -63,10 +63,12 @@ class BatchPortalProbeService:
         *,
         batch_id: UUID,
         dependency: str,
+        allow_processing: bool = False,
     ) -> BatchPortalProbeOutcome:
         batch, credential, portal_password = self._prepare_probe(
             batch_id=batch_id,
             dependency=dependency,
+            allow_processing=allow_processing,
         )
 
         try:
@@ -1275,6 +1277,7 @@ class BatchPortalProbeService:
         *,
         batch_id: UUID,
         dependency: str,
+        allow_processing: bool = False,
     ) -> tuple[ContractBatch, PortalCredentials, str]:
         batch = self._batches.get_by_id(
             batch_id,
@@ -1282,10 +1285,19 @@ class BatchPortalProbeService:
         )
         if batch is None:
             raise BatchNotFoundError(str(batch_id))
-        if batch.status is not BatchStatus.READY:
+        allowed_statuses = {BatchStatus.READY}
+        if allow_processing:
+            allowed_statuses.add(BatchStatus.PROCESSING)
+
+        if batch.status not in allowed_statuses:
+            expected = (
+                "READY o PROCESSING"
+                if allow_processing
+                else "READY"
+            )
             raise BatchPortalProbeBlockedError(
                 "La comprobación del portal solo está disponible para "
-                f"lotes READY. Estado actual: {batch.status.value}."
+                f"lotes {expected}. Estado actual: {batch.status.value}."
             )
 
         credential = self._credentials.find_by_dependency(dependency)

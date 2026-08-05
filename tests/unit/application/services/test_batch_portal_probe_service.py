@@ -125,6 +125,11 @@ def create_batch(
         updated_at=now,
     )
     stored = batches.create(batch)
+    if status is BatchStatus.PROCESSING:
+        return batches.claim_for_processing(
+            stored.batch_id,
+            dependency="Adquisiciones",
+        )
     if status is BatchStatus.CANCELLED:
         return batches.cancel_ready(
             stored.batch_id,
@@ -181,6 +186,49 @@ def test_should_decrypt_credentials_and_return_safe_probe_outcome(
     assert probe.password == "ClavePortal2026"
     assert "ClavePortal2026" not in outcome.message
 
+
+
+def test_should_allow_processing_batch_for_supervised_diagnostic(
+    tmp_path: Path,
+) -> None:
+    batches, credentials = repositories(tmp_path)
+    batch = create_batch(batches, status=BatchStatus.PROCESSING)
+    configure_credentials(credentials)
+    service = BatchPortalProbeService(
+        batches=batches,
+        credentials=credentials,
+        cipher=FakeCipher(),
+        probe=FakeProbe(),
+    )
+
+    outcome = service.run(
+        batch_id=batch.batch_id,
+        dependency="Adquisiciones",
+        allow_processing=True,
+    )
+
+    assert outcome.success is True
+    assert outcome.batch_id == batch.batch_id
+
+
+def test_should_reject_processing_batch_without_explicit_permission(
+    tmp_path: Path,
+) -> None:
+    batches, credentials = repositories(tmp_path)
+    batch = create_batch(batches, status=BatchStatus.PROCESSING)
+    configure_credentials(credentials)
+    service = BatchPortalProbeService(
+        batches=batches,
+        credentials=credentials,
+        cipher=FakeCipher(),
+        probe=FakeProbe(),
+    )
+
+    with pytest.raises(BatchPortalProbeBlockedError):
+        service.run(
+            batch_id=batch.batch_id,
+            dependency="Adquisiciones",
+        )
 
 def test_should_reject_non_ready_batch(tmp_path: Path) -> None:
     batches, credentials = repositories(tmp_path)

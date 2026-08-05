@@ -229,6 +229,7 @@ class InstitutionalTestPlanService:
         outcome = self._portal_probe.run(
             batch_id=batch_id,
             dependency=dependency,
+            allow_processing=True,
         )
         success = bool(
             outcome.success

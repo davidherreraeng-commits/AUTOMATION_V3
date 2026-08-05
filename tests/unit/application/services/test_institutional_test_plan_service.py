@@ -37,9 +37,17 @@ class FakePortalProbeService:
     def __init__(self, *, success: bool = True) -> None:
         self.success = success
         self.calls = 0
+        self.allow_processing = None
 
-    def run(self, *, batch_id, dependency):
+    def run(
+        self,
+        *,
+        batch_id,
+        dependency,
+        allow_processing=False,
+    ):
         self.calls += 1
+        self.allow_processing = allow_processing
         return SimpleNamespace(
             success=self.success,
             code="PORTAL_READY" if self.success else "PORTAL_BLOCKED",
@@ -102,6 +110,7 @@ def test_should_create_diagnose_and_arm_plan(tmp_path) -> None:
     assert ready.status is InstitutionalTestPlanStatus.READY
     assert ready.diagnostic_success is True
     assert probe.calls == 1
+    assert probe.allow_processing is True
 
     armed = service.arm(
         plan_id=created.plan_id,
