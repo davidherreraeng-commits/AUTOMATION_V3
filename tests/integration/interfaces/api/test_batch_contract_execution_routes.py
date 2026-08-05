@@ -494,3 +494,101 @@ def test_operator_should_not_access_controlled_contract_execution(
                 )
             },
         ).status_code == 403
+        assert client.request(
+            "DELETE",
+            f"{endpoint}/authorization",
+            json={
+                "confirmation": (
+                    "REVOCAR AUTORIZACIÓN 70-2026"
+                )
+            },
+        ).status_code == 403
+
+def test_should_revoke_authorization_and_reject_its_token(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "RPA_REAL_WRITE_AUTHORIZATION",
+        "INSTITUTIONALLY_AUTHORIZED",
+    )
+    executor = FakeContractExecutor()
+    app = create_app(
+        settings(tmp_path),
+        portal_credential_verifier=FakeVerifier(),
+        contract_executor=executor,
+        batch_portal_probe=object(),
+    )
+
+    with TestClient(app) as client:
+        executor.repository = app.state.execution_repository
+        create_account(app, username="jefe", role=UserRole.SUPERUSER)
+        login(client, "jefe")
+        save_and_test_credentials(client)
+        batch = create_batch(client)
+        _, endpoint = endpoint_for(batch)
+
+        preflight = client.get(
+            f"{endpoint}/preflight",
+            params={"mode": "REAL"},
+        )
+        assert preflight.status_code == 200
+        issue_confirmation = preflight.json()[
+            "authorization_required_confirmation"
+        ]
+
+        issued = client.post(
+            f"{endpoint}/authorization",
+            json={"confirmation": issue_confirmation},
+        )
+        assert issued.status_code == 201
+        issued_payload = issued.json()
+        token = issued_payload["authorization_token"]
+        assert issued_payload["seconds_remaining"] > 0
+        assert (
+            issued_payload["required_revoke_confirmation"]
+            == "REVOCAR AUTORIZACIÓN 70-2026"
+        )
+
+        wrong_confirmation = client.request(
+            "DELETE",
+            f"{endpoint}/authorization",
+            json={"confirmation": "REVOCAR AUTORIZACIÓN 71-2026"},
+        )
+        assert wrong_confirmation.status_code == 409
+        assert (
+            wrong_confirmation.json()["detail"]["required_confirmation"]
+            == "REVOCAR AUTORIZACIÓN 70-2026"
+        )
+
+        revoked = client.request(
+            "DELETE",
+            f"{endpoint}/authorization",
+            json={"confirmation": "REVOCAR AUTORIZACIÓN 70-2026"},
+        )
+        assert revoked.status_code == 200
+        revoked_payload = revoked.json()
+        assert revoked_payload["status"] == "REVOKED"
+        assert revoked_payload["available"] is False
+        assert revoked_payload["seconds_remaining"] == 0
+        assert revoked_payload["revoked_at"]
+        assert {
+            event["event_type"]
+            for event in revoked_payload["events"]
+        } >= {"ISSUED", "REVOKED"}
+
+        rejected = client.post(
+            endpoint,
+            json={
+                "mode": "REAL",
+                "confirmation": "EJECUTAR CONTRATO 70-2026",
+                "authorization_token": token,
+            },
+        )
+        assert rejected.status_code == 409
+        assert (
+            rejected.json()["detail"]["code"]
+            == "REAL_WRITE_AUTHORIZATION_REVOKED"
+        )
+        assert executor.calls == []
+

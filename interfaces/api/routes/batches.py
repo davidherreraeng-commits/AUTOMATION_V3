@@ -37,8 +37,10 @@ from domain.errors.real_write_authorization_errors import (
     RealWriteAuthorizationDisabledError,
     RealWriteAuthorizationExpiredError,
     RealWriteAuthorizationInvalidError,
+    RealWriteAuthorizationNotFoundError,
     RealWriteAuthorizationRepositoryError,
     RealWriteAuthorizationRequiredError,
+    RealWriteAuthorizationRevocationConfirmationError,
     RealWriteAuthorizationRevokedError,
 )
 from domain.errors.batch_execution_errors import (
@@ -73,6 +75,7 @@ from interfaces.api.schemas.batches import (
     BatchContractExecutionResponse,
     ContractExecutionEvidenceResponse,
     RealWriteAuthorizationIssueRequest,
+    RealWriteAuthorizationRevokeRequest,
     RealWriteAuthorizationResponse,
     BatchAssistantProbeResponse,
     BatchContractSaveProbeRequest,
@@ -421,6 +424,101 @@ def get_selected_contract_real_write_authorization(
         item_id=item_id,
         contract_number=preflight.item.contract.contract_number,
         dependency=preflight.batch.dependency,
+    )
+
+
+@router.delete(
+    "/{batch_id}/contracts/{item_id}/execution/authorization",
+    response_model=RealWriteAuthorizationResponse,
+)
+def revoke_selected_contract_real_write_authorization(
+    batch_id: UUID,
+    item_id: UUID,
+    payload: RealWriteAuthorizationRevokeRequest,
+    actor: Superuser,
+    service: Annotated[
+        ControlledBatchContractExecutionService,
+        Depends(get_batch_contract_execution_service),
+    ],
+) -> RealWriteAuthorizationResponse:
+    try:
+        authorization, events = (
+            service.revoke_real_write_authorization(
+                batch_id=batch_id,
+                item_id=item_id,
+                dependency=actor.dependency,
+                confirmation=payload.confirmation,
+                actor_username=actor.username,
+                actor_user_id=actor.user_id,
+            )
+        )
+    except BatchNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except BatchContractItemNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except RealWriteAuthorizationRevocationConfirmationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": error.code,
+                "message": str(error),
+                "required_confirmation": error.required_confirmation,
+            },
+        ) from error
+    except RealWriteAuthorizationNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": error.code,
+                "message": str(error),
+            },
+        ) from error
+    except (
+        RealWriteAuthorizationExpiredError,
+        RealWriteAuthorizationConsumedError,
+        RealWriteAuthorizationRevokedError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": error.code,
+                "message": str(error),
+            },
+        ) from error
+    except RealWriteAuthorizationContextError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": error.code,
+                "message": (
+                    "La autorización temporal no pertenece al contexto "
+                    "solicitado."
+                ),
+            },
+        ) from error
+    except (
+        BatchRepositoryError,
+        ExecutionRepositoryError,
+        RealWriteAuthorizationRepositoryError,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No fue posible revocar la autorización temporal.",
+        ) from error
+
+    return RealWriteAuthorizationResponse.from_status(
+        authorization=authorization,
+        events=events,
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number=authorization.contract_number,
+        dependency=authorization.dependency,
     )
 
 

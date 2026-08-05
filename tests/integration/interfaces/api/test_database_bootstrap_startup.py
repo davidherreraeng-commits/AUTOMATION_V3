@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from adapters.persistence.sqlite.real_write_authorization_repository import (
+    SQLiteRealWriteAuthorizationRepository,
+)
+from application.dto.real_write_authorization import RealWriteAuthorization
+from domain.enums import RealWriteAuthorizationStatus
 from domain.enums.user_role import UserRole
 from infrastructure.config.settings import Settings
 from interfaces.api.main import create_app
@@ -106,3 +113,58 @@ def test_app_restart_should_preserve_local_user_data(
     assert report.created_database is False
     assert report.migration_applied is False
     assert report.backup_path is None
+
+def test_app_startup_should_sweep_expired_authorizations(
+    tmp_path: Path,
+) -> None:
+    configured = settings(tmp_path)
+    first_app = create_app(
+        configured,
+        portal_credential_verifier=FakeVerifier(),
+        batch_portal_probe=FakeProbe(),
+    )
+    with TestClient(first_app):
+        pass
+
+    repository = SQLiteRealWriteAuthorizationRepository(
+        configured.resolved_database_path
+    )
+    repository.initialize()
+    now = datetime.now(UTC)
+    batch_id = uuid4()
+    item_id = uuid4()
+    issued = repository.issue(
+        RealWriteAuthorization(
+            authorization_id=uuid4(),
+            token_hash="e" * 64,
+            batch_id=batch_id,
+            item_id=item_id,
+            contract_number="70-2026",
+            dependency="Adquisiciones",
+            actor_username="jefe",
+            actor_user_id=1,
+            status=RealWriteAuthorizationStatus.ACTIVE,
+            issued_at=now - timedelta(minutes=2),
+            expires_at=now - timedelta(minutes=1),
+        )
+    )
+
+    second_app = create_app(
+        configured,
+        portal_credential_verifier=FakeVerifier(),
+        batch_portal_probe=FakeProbe(),
+    )
+    with TestClient(second_app):
+        assert second_app.state.expired_real_write_authorizations == 1
+        latest = second_app.state.real_write_authorization_repository.get_latest(
+            batch_id=batch_id,
+            item_id=item_id,
+            actor_username="jefe",
+            actor_user_id=1,
+            now=now,
+        )
+
+    assert latest is not None
+    assert latest.authorization_id == issued.authorization_id
+    assert latest.status is RealWriteAuthorizationStatus.EXPIRED
+

@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 
 import {
   applyContractExecutionToBatch,
+  authorizationRemainingSeconds,
   canSubmitContractExecution,
   confirmationMatches,
   contractActionLabel,
+  formatAuthorizationCountdown,
   normalizeConfirmation,
 } from "../src/api/batchContractExecutionUtils.js";
 
@@ -138,6 +140,56 @@ test("la simulación no requiere autorización temporal", () => {
       },
       mode: "DRY_RUN",
       confirmation: "simular contrato 70-2026",
+    }),
+    true,
+  );
+});
+
+test("calcula y formatea el tiempo restante de la autorización", () => {
+  const now = new Date("2026-08-04T18:00:00Z").getTime();
+  assert.equal(
+    authorizationRemainingSeconds(
+      "2026-08-04T18:01:05Z",
+      now,
+    ),
+    65,
+  );
+  assert.equal(formatAuthorizationCountdown(65), "01:05");
+  assert.equal(
+    authorizationRemainingSeconds(
+      "2026-08-04T17:59:59Z",
+      now,
+    ),
+    0,
+  );
+});
+
+test("la escritura real rechaza un token vencido en memoria", () => {
+  const preflight = {
+    can_execute: true,
+    required_confirmation: "EJECUTAR CONTRATO 70-2026",
+  };
+  const now = new Date("2026-08-04T18:00:00Z").getTime();
+
+  assert.equal(
+    canSubmitContractExecution({
+      preflight,
+      mode: "REAL",
+      confirmation: "EJECUTAR CONTRATO 70-2026",
+      authorizationToken: "token-temporal",
+      authorizationExpiresAt: "2026-08-04T17:59:59Z",
+      now,
+    }),
+    false,
+  );
+  assert.equal(
+    canSubmitContractExecution({
+      preflight,
+      mode: "REAL",
+      confirmation: "EJECUTAR CONTRATO 70-2026",
+      authorizationToken: "token-temporal",
+      authorizationExpiresAt: "2026-08-04T18:00:30Z",
+      now,
     }),
     true,
   );

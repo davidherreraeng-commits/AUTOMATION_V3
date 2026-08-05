@@ -6,8 +6,10 @@ from domain.errors.real_write_authorization_errors import (
     RealWriteAuthorizationError,
     RealWriteAuthorizationExpiredError,
     RealWriteAuthorizationInvalidError,
+    RealWriteAuthorizationNotFoundError,
     RealWriteAuthorizationRepositoryError,
     RealWriteAuthorizationRequiredError,
+    RealWriteAuthorizationRevocationConfirmationError,
     RealWriteAuthorizationRevokedError,
 )
 from domain.errors.execution_evidence_errors import (
@@ -73,8 +75,10 @@ __all__ = [
     "RealWriteAuthorizationError",
     "RealWriteAuthorizationExpiredError",
     "RealWriteAuthorizationInvalidError",
+    "RealWriteAuthorizationNotFoundError",
     "RealWriteAuthorizationRepositoryError",
     "RealWriteAuthorizationRequiredError",
+    "RealWriteAuthorizationRevocationConfirmationError",
     "RealWriteAuthorizationRevokedError",
     "ExecutionEvidenceContextError",
     "ExecutionEvidenceNotFoundError",

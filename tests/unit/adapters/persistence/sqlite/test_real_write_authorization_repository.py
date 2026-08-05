@@ -18,6 +18,8 @@ from domain.errors.real_write_authorization_errors import (
     RealWriteAuthorizationConsumedError,
     RealWriteAuthorizationContextError,
     RealWriteAuthorizationExpiredError,
+    RealWriteAuthorizationNotFoundError,
+    RealWriteAuthorizationRevokedError,
 )
 
 
@@ -260,3 +262,216 @@ def test_new_issue_should_revoke_previous_active_token(
     assert latest is not None
     assert latest.authorization_id == second.authorization_id
     assert latest.status is RealWriteAuthorizationStatus.ACTIVE
+
+def test_should_revoke_active_authorization_and_reject_token(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    batch_id = uuid4()
+    item_id = uuid4()
+    raw_token = "token-revocable-seguro-1234567890"
+    stored = repo.issue(
+        record(
+            token_hash=RealWriteAuthorizationService.hash_token(
+                raw_token
+            ),
+            batch_id=batch_id,
+            item_id=item_id,
+        )
+    )
+
+    revoked = repo.revoke(
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number="70-2026",
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+        now=BASE_TIME + timedelta(seconds=10),
+    )
+
+    assert revoked.authorization_id == stored.authorization_id
+    assert revoked.status is RealWriteAuthorizationStatus.REVOKED
+    assert revoked.revoked_at == BASE_TIME + timedelta(seconds=10)
+
+    with pytest.raises(RealWriteAuthorizationRevokedError):
+        repo.consume(
+            token_hash=RealWriteAuthorizationService.hash_token(
+                raw_token
+            ),
+            batch_id=batch_id,
+            item_id=item_id,
+            contract_number="70-2026",
+            dependency="Adquisiciones",
+            actor_username="jefe",
+            actor_user_id=1,
+            correlation_id=uuid4(),
+            now=BASE_TIME + timedelta(seconds=11),
+        )
+
+    events = repo.list_events(
+        batch_id=batch_id,
+        item_id=item_id,
+        authorization_id=stored.authorization_id,
+    )
+    assert [event.event_type for event in events] == [
+        "ISSUED",
+        "REVOKED",
+        "REJECTED",
+    ]
+    assert events[1].reason == "MANUAL_REVOCATION"
+    assert events[2].reason == "REVOKED"
+
+
+def test_revoke_should_fail_when_authorization_does_not_exist(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    batch_id = uuid4()
+    item_id = uuid4()
+
+    with pytest.raises(RealWriteAuthorizationNotFoundError):
+        repo.revoke(
+            batch_id=batch_id,
+            item_id=item_id,
+            contract_number="70-2026",
+            dependency="Adquisiciones",
+            actor_username="jefe",
+            actor_user_id=1,
+            now=BASE_TIME,
+        )
+
+    events = repo.list_events(
+        batch_id=batch_id,
+        item_id=item_id,
+    )
+    assert len(events) == 1
+    assert events[0].event_type == "REJECTED"
+    assert events[0].reason == "REVOCATION_NOT_FOUND"
+
+
+def test_should_sweep_all_due_active_authorizations(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    first_batch = uuid4()
+    first_item = uuid4()
+    second_batch = uuid4()
+    second_item = uuid4()
+
+    first = repo.issue(
+        record(
+            token_hash="c" * 64,
+            batch_id=first_batch,
+            item_id=first_item,
+            expires_at=BASE_TIME + timedelta(seconds=30),
+        )
+    )
+    second = repo.issue(
+        record(
+            token_hash="d" * 64,
+            batch_id=second_batch,
+            item_id=second_item,
+            expires_at=BASE_TIME + timedelta(seconds=40),
+        )
+    )
+
+    expired = repo.expire_due(
+        now=BASE_TIME + timedelta(seconds=60),
+    )
+    repeated = repo.expire_due(
+        now=BASE_TIME + timedelta(seconds=61),
+    )
+
+    assert expired == 2
+    assert repeated == 0
+
+    first_events = repo.list_events(
+        batch_id=first_batch,
+        item_id=first_item,
+        authorization_id=first.authorization_id,
+    )
+    second_events = repo.list_events(
+        batch_id=second_batch,
+        item_id=second_item,
+        authorization_id=second.authorization_id,
+    )
+    assert [event.event_type for event in first_events] == [
+        "ISSUED",
+        "EXPIRED",
+    ]
+    assert [event.event_type for event in second_events] == [
+        "ISSUED",
+        "EXPIRED",
+    ]
+
+@pytest.mark.parametrize(
+    (
+        "override",
+        "expected_reason",
+    ),
+    [
+        ({"batch_id": uuid4()}, "CONTEXT_MISMATCH"),
+        ({"item_id": uuid4()}, "CONTEXT_MISMATCH"),
+        ({"contract_number": "71-2026"}, "CONTEXT_MISMATCH"),
+        ({"dependency": "Proyectos Especiales"}, "CONTEXT_MISMATCH"),
+        ({"actor_username": "otro-jefe"}, "CONTEXT_MISMATCH"),
+        ({"actor_user_id": 99}, "CONTEXT_MISMATCH"),
+    ],
+)
+def test_token_should_be_bound_to_every_context_dimension(
+    tmp_path: Path,
+    override: dict[str, object],
+    expected_reason: str,
+) -> None:
+    repo = repository(tmp_path)
+    batch_id = uuid4()
+    item_id = uuid4()
+    raw_token = "token-contexto-completo-1234567890"
+    stored = repo.issue(
+        record(
+            token_hash=RealWriteAuthorizationService.hash_token(
+                raw_token
+            ),
+            batch_id=batch_id,
+            item_id=item_id,
+        )
+    )
+    context = {
+        "batch_id": batch_id,
+        "item_id": item_id,
+        "contract_number": "70-2026",
+        "dependency": "Adquisiciones",
+        "actor_username": "jefe",
+        "actor_user_id": 1,
+    }
+    context.update(override)
+
+    with pytest.raises(RealWriteAuthorizationContextError):
+        repo.consume(
+            token_hash=RealWriteAuthorizationService.hash_token(
+                raw_token
+            ),
+            correlation_id=uuid4(),
+            now=BASE_TIME + timedelta(seconds=5),
+            **context,
+        )
+
+    latest = repo.get_latest(
+        batch_id=batch_id,
+        item_id=item_id,
+        actor_username="jefe",
+        actor_user_id=1,
+        now=BASE_TIME + timedelta(seconds=6),
+    )
+    assert latest is not None
+    assert latest.authorization_id == stored.authorization_id
+    assert latest.status is RealWriteAuthorizationStatus.ACTIVE
+
+    all_events = repo.list_events(
+        batch_id=context["batch_id"],
+        item_id=context["item_id"],
+    )
+    assert all_events[-1].event_type == "REJECTED"
+    assert all_events[-1].reason == expected_reason
+

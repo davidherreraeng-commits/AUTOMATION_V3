@@ -38,6 +38,19 @@ class RealWriteAuthorizationConfirmationError(
         )
 
 
+class RealWriteAuthorizationRevocationConfirmationError(
+    RealWriteAuthorizationError
+):
+    code = "REAL_WRITE_AUTHORIZATION_REVOCATION_CONFIRMATION_REQUIRED"
+
+    def __init__(self, required_confirmation: str) -> None:
+        self.required_confirmation = required_confirmation
+        super().__init__(
+            "La confirmación para revocar la autorización temporal "
+            "no coincide."
+        )
+
+
 class RealWriteAuthorizationRequiredError(
     RealWriteAuthorizationError
 ):
@@ -47,6 +60,19 @@ class RealWriteAuthorizationRequiredError(
         super().__init__(
             "Se requiere una autorización temporal de un solo uso "
             "para iniciar la escritura real."
+        )
+
+
+
+
+class RealWriteAuthorizationNotFoundError(
+    RealWriteAuthorizationError
+):
+    code = "REAL_WRITE_AUTHORIZATION_NOT_FOUND"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "No existe una autorización temporal para el contrato solicitado."
         )
 
 

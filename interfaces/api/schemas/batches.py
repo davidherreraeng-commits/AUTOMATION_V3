@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -93,6 +93,18 @@ class RealWriteAuthorizationIssueRequest(BaseModel):
         return normalized
 
 
+class RealWriteAuthorizationRevokeRequest(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=220)
+
+    @field_validator("confirmation")
+    @classmethod
+    def normalize_confirmation(cls, value: str) -> str:
+        normalized = " ".join(str(value).strip().split())
+        if not normalized:
+            raise ValueError("La confirmación es obligatoria.")
+        return normalized
+
+
 class RealWriteAuthorizationEventResponse(BaseModel):
     event_id: UUID
     authorization_id: UUID | None
@@ -133,9 +145,33 @@ class RealWriteAuthorizationResponse(BaseModel):
     revoked_at: datetime | None
     authorization_token: str | None = None
     required_execution_confirmation: str | None = None
+    required_revoke_confirmation: str | None = None
+    server_time: datetime
+    seconds_remaining: int = Field(ge=0)
     events: list[RealWriteAuthorizationEventResponse] = Field(
         default_factory=list
     )
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(UTC)
+
+    @staticmethod
+    def _seconds_remaining(
+        authorization: RealWriteAuthorization | None,
+        *,
+        now: datetime,
+    ) -> int:
+        if (
+            authorization is None
+            or authorization.status
+            is not RealWriteAuthorizationStatus.ACTIVE
+        ):
+            return 0
+        return max(
+            0,
+            int((authorization.expires_at - now).total_seconds()),
+        )
 
     @classmethod
     def from_issued(
@@ -143,6 +179,7 @@ class RealWriteAuthorizationResponse(BaseModel):
         issued: IssuedRealWriteAuthorization,
     ) -> "RealWriteAuthorizationResponse":
         authorization = issued.authorization
+        now = cls._now()
         return cls(
             batch_id=authorization.batch_id,
             item_id=authorization.item_id,
@@ -165,6 +202,15 @@ class RealWriteAuthorizationResponse(BaseModel):
             required_execution_confirmation=(
                 issued.required_execution_confirmation
             ),
+            required_revoke_confirmation=(
+                "REVOCAR AUTORIZACIÓN "
+                f"{authorization.contract_number}"
+            ),
+            server_time=now,
+            seconds_remaining=cls._seconds_remaining(
+                authorization,
+                now=now,
+            ),
             events=[
                 RealWriteAuthorizationEventResponse.from_domain(event)
                 for event in issued.events
@@ -182,6 +228,7 @@ class RealWriteAuthorizationResponse(BaseModel):
         contract_number: str,
         dependency: str,
     ) -> "RealWriteAuthorizationResponse":
+        now = cls._now()
         return cls(
             batch_id=batch_id,
             item_id=item_id,
@@ -226,6 +273,19 @@ class RealWriteAuthorizationResponse(BaseModel):
                 authorization.revoked_at
                 if authorization is not None
                 else None
+            ),
+            required_revoke_confirmation=(
+                "REVOCAR AUTORIZACIÓN "
+                f"{contract_number}"
+                if authorization is not None
+                and authorization.status
+                is RealWriteAuthorizationStatus.ACTIVE
+                else None
+            ),
+            server_time=now,
+            seconds_remaining=cls._seconds_remaining(
+                authorization,
+                now=now,
             ),
             events=[
                 RealWriteAuthorizationEventResponse.from_domain(event)

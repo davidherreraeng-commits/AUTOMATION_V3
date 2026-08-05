@@ -46,6 +46,28 @@ class RealWriteAuthorizationRepository(Protocol):
     ) -> RealWriteAuthorization:
         ...
 
+    def revoke(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        contract_number: str,
+        dependency: str,
+        actor_username: str,
+        actor_user_id: int | None,
+        now: datetime,
+        reason: str = "MANUAL_REVOCATION",
+    ) -> RealWriteAuthorization:
+        ...
+
+    def expire_due(
+        self,
+        *,
+        now: datetime,
+        limit: int = 500,
+    ) -> int:
+        ...
+
     def record_rejection(
         self,
         *,

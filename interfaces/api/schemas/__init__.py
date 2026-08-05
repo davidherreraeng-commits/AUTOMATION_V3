@@ -4,6 +4,7 @@ from interfaces.api.schemas.batches import (
     BatchContractExecutionResponse,
     ContractExecutionEvidenceResponse,
     RealWriteAuthorizationIssueRequest,
+    RealWriteAuthorizationRevokeRequest,
     RealWriteAuthorizationResponse,
     RealWriteAuthorizationEventResponse,
     ExecutionEvidenceEventResponse,
@@ -60,6 +61,7 @@ from interfaces.api.schemas.users import (
 
 __all__ = [
     "RealWriteAuthorizationIssueRequest",
+    "RealWriteAuthorizationRevokeRequest",
     "RealWriteAuthorizationResponse",
     "RealWriteAuthorizationEventResponse",
     "BatchContractExecutionPreflightResponse",

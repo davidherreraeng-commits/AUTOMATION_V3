@@ -234,6 +234,9 @@ def create_app(
         app.state.real_write_authorization_service = (
             real_write_authorization_service
         )
+        app.state.expired_real_write_authorizations = (
+            real_write_authorization_service.cleanup_expired()
+        )
         app.state.batch_contract_execution_service = (
             ControlledBatchContractExecutionService(
                 real_service=real_contract_execution_service,

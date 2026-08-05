@@ -1,16 +1,20 @@
 import api from "./axiosConfig";
 import {
   applyContractExecutionToBatch,
+  authorizationRemainingSeconds,
   canSubmitContractExecution,
   confirmationMatches,
+  formatAuthorizationCountdown,
   contractActionLabel,
   normalizeConfirmation,
 } from "./batchContractExecutionUtils";
 
 export {
   applyContractExecutionToBatch,
+  authorizationRemainingSeconds,
   canSubmitContractExecution,
   confirmationMatches,
+  formatAuthorizationCountdown,
   contractActionLabel,
   normalizeConfirmation,
 };
@@ -59,6 +63,18 @@ export async function getRealWriteAuthorization({
 }) {
   const response = await api.get(
     `/batches/${batchId}/contracts/${itemId}/execution/authorization`,
+  );
+  return response.data;
+}
+
+export async function revokeRealWriteAuthorization({
+  batchId,
+  itemId,
+  confirmation,
+}) {
+  const response = await api.delete(
+    `/batches/${batchId}/contracts/${itemId}/execution/authorization`,
+    { data: { confirmation } },
   );
   return response.data;
 }

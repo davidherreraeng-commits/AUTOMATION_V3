@@ -20,6 +20,7 @@ from domain.errors.real_write_authorization_errors import (
     RealWriteAuthorizationContextError,
     RealWriteAuthorizationExpiredError,
     RealWriteAuthorizationInvalidError,
+    RealWriteAuthorizationNotFoundError,
     RealWriteAuthorizationRepositoryError,
     RealWriteAuthorizationRevokedError,
 )
@@ -529,6 +530,207 @@ class SQLiteRealWriteAuthorizationRepository:
                 "No fue posible recuperar la autorización consumida."
             )
         return stored
+
+    def revoke(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        contract_number: str,
+        dependency: str,
+        actor_username: str,
+        actor_user_id: int | None,
+        now: datetime,
+        reason: str = "MANUAL_REVOCATION",
+    ) -> RealWriteAuthorization:
+        normalized_now = _utc(now)
+        pending_error: Exception | None = None
+        revoked_id: UUID | None = None
+
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT *
+                      FROM real_write_authorizations
+                     WHERE batch_id = ?
+                       AND item_id = ?
+                       AND actor_identity = ?
+                       AND (
+                            actor_user_id = ?
+                            OR (actor_user_id IS NULL AND ? IS NULL)
+                       )
+                     ORDER BY issued_at DESC
+                     LIMIT 1
+                    """,
+                    (
+                        str(batch_id),
+                        str(item_id),
+                        _identity(actor_username),
+                        actor_user_id,
+                        actor_user_id,
+                    ),
+                ).fetchone()
+
+                if row is None:
+                    self._insert_event(
+                        connection,
+                        authorization_id=None,
+                        event_type="REJECTED",
+                        batch_id=batch_id,
+                        item_id=item_id,
+                        contract_number=contract_number,
+                        dependency=dependency,
+                        actor_username=actor_username,
+                        actor_user_id=actor_user_id,
+                        recorded_at=normalized_now,
+                        reason="REVOCATION_NOT_FOUND",
+                    )
+                    pending_error = RealWriteAuthorizationNotFoundError()
+                elif not self._context_matches(
+                    row,
+                    batch_id=batch_id,
+                    item_id=item_id,
+                    contract_number=contract_number,
+                    dependency=dependency,
+                    actor_username=actor_username,
+                    actor_user_id=actor_user_id,
+                ):
+                    authorization_id = UUID(str(row["authorization_id"]))
+                    self._insert_event(
+                        connection,
+                        authorization_id=authorization_id,
+                        event_type="REJECTED",
+                        batch_id=batch_id,
+                        item_id=item_id,
+                        contract_number=contract_number,
+                        dependency=dependency,
+                        actor_username=actor_username,
+                        actor_user_id=actor_user_id,
+                        recorded_at=normalized_now,
+                        reason="REVOCATION_CONTEXT_MISMATCH",
+                    )
+                    pending_error = RealWriteAuthorizationContextError()
+                else:
+                    row = self._expire_row_if_needed(
+                        connection,
+                        row=row,
+                        now=normalized_now,
+                    )
+                    authorization_id = UUID(str(row["authorization_id"]))
+                    current_status = RealWriteAuthorizationStatus(
+                        str(row["status"])
+                    )
+                    if current_status is RealWriteAuthorizationStatus.EXPIRED:
+                        pending_error = RealWriteAuthorizationExpiredError(
+                            authorization_id
+                        )
+                    elif current_status is RealWriteAuthorizationStatus.CONSUMED:
+                        pending_error = RealWriteAuthorizationConsumedError(
+                            authorization_id
+                        )
+                    elif current_status is RealWriteAuthorizationStatus.REVOKED:
+                        pending_error = RealWriteAuthorizationRevokedError(
+                            authorization_id
+                        )
+                    else:
+                        cursor = connection.execute(
+                            """
+                            UPDATE real_write_authorizations
+                               SET status = 'REVOKED',
+                                   revoked_at = ?
+                             WHERE authorization_id = ?
+                               AND status = 'ACTIVE'
+                            """,
+                            (
+                                _to_text(normalized_now),
+                                str(authorization_id),
+                            ),
+                        )
+                        if cursor.rowcount != 1:
+                            pending_error = (
+                                RealWriteAuthorizationRevokedError(
+                                    authorization_id
+                                )
+                            )
+                        else:
+                            self._insert_event(
+                                connection,
+                                authorization_id=authorization_id,
+                                event_type="REVOKED",
+                                batch_id=batch_id,
+                                item_id=item_id,
+                                contract_number=contract_number,
+                                dependency=dependency,
+                                actor_username=actor_username,
+                                actor_user_id=actor_user_id,
+                                recorded_at=normalized_now,
+                                reason=str(reason).strip()
+                                or "MANUAL_REVOCATION",
+                                metadata={"manual": True},
+                            )
+                            revoked_id = authorization_id
+                connection.commit()
+        except sqlite3.Error as error:
+            raise RealWriteAuthorizationRepositoryError(
+                "No fue posible revocar la autorización temporal."
+            ) from error
+
+        if pending_error is not None:
+            raise pending_error
+        if revoked_id is None:
+            raise RealWriteAuthorizationRepositoryError(
+                "La autorización temporal no pudo revocarse."
+            )
+
+        stored = self._get_by_id(revoked_id)
+        if stored is None:
+            raise RealWriteAuthorizationRepositoryError(
+                "No fue posible recuperar la autorización revocada."
+            )
+        return stored
+
+    def expire_due(
+        self,
+        *,
+        now: datetime,
+        limit: int = 500,
+    ) -> int:
+        normalized_now = _utc(now)
+        normalized_limit = max(1, min(int(limit), 5000))
+        expired_count = 0
+
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                rows = connection.execute(
+                    """
+                    SELECT *
+                      FROM real_write_authorizations
+                     WHERE status = 'ACTIVE'
+                       AND expires_at <= ?
+                     ORDER BY expires_at ASC
+                     LIMIT ?
+                    """,
+                    (_to_text(normalized_now), normalized_limit),
+                ).fetchall()
+                for row in rows:
+                    before = connection.total_changes
+                    self._mark_expired(
+                        connection,
+                        row=row,
+                        now=normalized_now,
+                    )
+                    if connection.total_changes > before:
+                        expired_count += 1
+                connection.commit()
+        except sqlite3.Error as error:
+            raise RealWriteAuthorizationRepositoryError(
+                "No fue posible limpiar autorizaciones temporales vencidas."
+            ) from error
+
+        return expired_count
 
     def record_rejection(
         self,

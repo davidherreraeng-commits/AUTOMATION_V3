@@ -21,6 +21,7 @@ from domain.errors.real_write_authorization_errors import (
     RealWriteAuthorizationConfirmationError,
     RealWriteAuthorizationDisabledError,
     RealWriteAuthorizationRequiredError,
+    RealWriteAuthorizationRevocationConfirmationError,
 )
 
 
@@ -156,6 +157,40 @@ class RealWriteAuthorizationService:
             now=self._utc_now(),
         )
 
+    def revoke(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        contract_number: str,
+        dependency: str,
+        actor_username: str,
+        actor_user_id: int | None,
+        confirmation: str,
+    ) -> RealWriteAuthorization:
+        required = self.required_revoke_confirmation(contract_number)
+        if self._identity(confirmation) != self._identity(required):
+            raise RealWriteAuthorizationRevocationConfirmationError(
+                required
+            )
+
+        return self._repository.revoke(
+            batch_id=batch_id,
+            item_id=item_id,
+            contract_number=contract_number,
+            dependency=dependency,
+            actor_username=actor_username,
+            actor_user_id=actor_user_id,
+            now=self._utc_now(),
+            reason="MANUAL_REVOCATION",
+        )
+
+    def cleanup_expired(self, *, limit: int = 500) -> int:
+        return self._repository.expire_due(
+            now=self._utc_now(),
+            limit=limit,
+        )
+
     def list_events(
         self,
         *,
@@ -195,6 +230,13 @@ class RealWriteAuthorizationService:
     @staticmethod
     def required_execution_confirmation(contract_number: str) -> str:
         return f"EJECUTAR CONTRATO {str(contract_number).strip()}"
+
+    @staticmethod
+    def required_revoke_confirmation(contract_number: str) -> str:
+        return (
+            "REVOCAR AUTORIZACIÓN "
+            f"{str(contract_number).strip()}"
+        )
 
     @staticmethod
     def _identity(value: object) -> str:

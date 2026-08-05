@@ -300,6 +300,40 @@ class ControlledBatchContractExecutionService:
         _ = base
         return authorization, events
 
+    def revoke_real_write_authorization(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        dependency: str,
+        confirmation: str,
+        actor_username: str,
+        actor_user_id: int | None,
+    ) -> tuple[
+        RealWriteAuthorization,
+        tuple[RealWriteAuthorizationEvent, ...],
+    ]:
+        base = self._real.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=dependency,
+        )
+        authorization = self._authorizations.revoke(
+            batch_id=batch_id,
+            item_id=item_id,
+            contract_number=base.item.contract.contract_number,
+            dependency=base.batch.dependency,
+            actor_username=actor_username,
+            actor_user_id=actor_user_id,
+            confirmation=confirmation,
+        )
+        events = self._authorizations.list_events(
+            batch_id=batch_id,
+            item_id=item_id,
+            authorization_id=None,
+        )
+        return authorization, events
+
     def execute(
         self,
         *,

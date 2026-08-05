@@ -39,6 +39,8 @@ export function canSubmitContractExecution({
   mode = "DRY_RUN",
   confirmation,
   authorizationToken = null,
+  authorizationExpiresAt = null,
+  now = Date.now(),
 }) {
   if (!preflight?.can_execute) return false;
   if (
@@ -49,8 +51,35 @@ export function canSubmitContractExecution({
   ) {
     return false;
   }
-  if (mode === "REAL" && !String(authorizationToken ?? "").trim()) {
-    return false;
+  if (mode === "REAL") {
+    if (!String(authorizationToken ?? "").trim()) {
+      return false;
+    }
+    if (
+      authorizationExpiresAt &&
+      authorizationRemainingSeconds(authorizationExpiresAt, now) <= 0
+    ) {
+      return false;
+    }
   }
   return true;
 }
+
+export function authorizationRemainingSeconds(
+  expiresAt,
+  now = Date.now(),
+) {
+  if (!expiresAt) return 0;
+  const expires = new Date(expiresAt).getTime();
+  const current = now instanceof Date ? now.getTime() : Number(now);
+  if (!Number.isFinite(expires) || !Number.isFinite(current)) return 0;
+  return Math.max(0, Math.ceil((expires - current) / 1000));
+}
+
+export function formatAuthorizationCountdown(seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  const minutes = Math.floor(value / 60);
+  const remainder = value % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+

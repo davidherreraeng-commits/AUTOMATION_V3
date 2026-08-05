@@ -17,6 +17,7 @@ from domain.errors.real_write_authorization_errors import (
     RealWriteAuthorizationConfirmationError,
     RealWriteAuthorizationDisabledError,
     RealWriteAuthorizationRequiredError,
+    RealWriteAuthorizationRevocationConfirmationError,
 )
 
 
@@ -145,3 +146,99 @@ def test_missing_token_should_be_audited_and_rejected(
     assert events[0].event_type == "REJECTED"
     assert events[0].reason == "MISSING_TOKEN"
     assert events[0].correlation_id == correlation_id
+
+def test_should_require_exact_revocation_confirmation(
+    tmp_path: Path,
+) -> None:
+    clock = Clock(datetime(2026, 8, 4, 18, 45, tzinfo=UTC))
+    authorizations = service(tmp_path, clock=clock)
+    batch_id = uuid4()
+    item_id = uuid4()
+    authorizations.issue(
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number="70-2026",
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+        confirmation="AUTORIZAR ESCRITURA REAL 70-2026",
+    )
+
+    with pytest.raises(
+        RealWriteAuthorizationRevocationConfirmationError
+    ) as error:
+        authorizations.revoke(
+            batch_id=batch_id,
+            item_id=item_id,
+            contract_number="70-2026",
+            dependency="Adquisiciones",
+            actor_username="jefe",
+            actor_user_id=1,
+            confirmation="REVOCAR AUTORIZACIÓN 71-2026",
+        )
+
+    assert (
+        error.value.required_confirmation
+        == "REVOCAR AUTORIZACIÓN 70-2026"
+    )
+
+
+def test_should_revoke_without_requiring_server_write_gate(
+    tmp_path: Path,
+) -> None:
+    clock = Clock(datetime(2026, 8, 4, 18, 45, tzinfo=UTC))
+    enabled_service = service(tmp_path, clock=clock)
+    batch_id = uuid4()
+    item_id = uuid4()
+    enabled_service.issue(
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number="70-2026",
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+        confirmation="AUTORIZAR ESCRITURA REAL 70-2026",
+    )
+
+    disabled_repository = SQLiteRealWriteAuthorizationRepository(
+        tmp_path / "authorization-service.sqlite3"
+    )
+    disabled_repository.initialize()
+    disabled_service = RealWriteAuthorizationService(
+        repository=disabled_repository,
+        enabled=False,
+        ttl_seconds=120,
+        clock=clock,
+    )
+    revoked = disabled_service.revoke(
+        batch_id=batch_id,
+        item_id=item_id,
+        contract_number="70-2026",
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+        confirmation="REVOCAR AUTORIZACIÓN 70-2026",
+    )
+
+    assert revoked.status is RealWriteAuthorizationStatus.REVOKED
+
+
+def test_cleanup_should_expire_due_authorizations(
+    tmp_path: Path,
+) -> None:
+    clock = Clock(datetime(2026, 8, 4, 18, 45, tzinfo=UTC))
+    authorizations = service(tmp_path, clock=clock)
+    issued = authorizations.issue(
+        batch_id=uuid4(),
+        item_id=uuid4(),
+        contract_number="70-2026",
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+        confirmation="AUTORIZAR ESCRITURA REAL 70-2026",
+    )
+
+    clock.value = issued.authorization.expires_at + timedelta(seconds=1)
+    assert authorizations.cleanup_expired() == 1
+    assert authorizations.cleanup_expired() == 0
+
