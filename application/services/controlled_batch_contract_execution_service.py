@@ -32,6 +32,9 @@ from application.services.real_write_authorization_service import (
 from application.services.institutional_test_plan_service import (
     InstitutionalTestPlanService,
 )
+from application.workflow.contract_chain import (
+    stage_metadata_for_checkpoint,
+)
 from domain.enums import (
     ContractStep,
     ExecutionMode,
@@ -866,6 +869,7 @@ class ControlledBatchContractExecutionService:
                     metadata={
                         "execution_status": transition.execution.status.value,
                         "mode": result.mode.value,
+                        **stage_metadata_for_checkpoint(transition.step),
                     },
                 )
             )
@@ -888,6 +892,9 @@ class ControlledBatchContractExecutionService:
                         ),
                         "transition_count": result.transition_count,
                         "mode": result.mode.value,
+                        **stage_metadata_for_checkpoint(
+                            result.last_completed_step
+                        ),
                     },
                 )
             )

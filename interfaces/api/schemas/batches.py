@@ -43,6 +43,11 @@ from domain.enums.real_write_authorization_status import (
 from domain.enums.institutional_test_plan_status import (
     InstitutionalTestPlanStatus,
 )
+from application.workflow.contract_chain import (
+    ContractChainStageProjection,
+    completed_stage_count,
+    project_contract_chain,
+)
 
 
 class BatchCreateRequest(BaseModel):
@@ -738,6 +743,61 @@ class BatchContractExecutionIssueResponse(BaseModel):
     blocking: bool
 
 
+class ContractChainStageResponse(BaseModel):
+    code: str
+    label: str
+    checkpoint_step: str
+    status: str
+    touches_portal: bool
+    persists_institutional_data: bool
+    irreversible_boundary: bool
+
+    @classmethod
+    def from_projection(
+        cls,
+        stage: ContractChainStageProjection,
+    ) -> "ContractChainStageResponse":
+        return cls(
+            code=stage.code,
+            label=stage.label,
+            checkpoint_step=stage.checkpoint_step.value,
+            status=stage.status.value,
+            touches_portal=stage.touches_portal,
+            persists_institutional_data=(
+                stage.persists_institutional_data
+            ),
+            irreversible_boundary=stage.irreversible_boundary,
+        )
+
+
+def _chain_response_data(execution) -> dict[str, object]:
+    projections = project_contract_chain(
+        last_completed_step=(
+            execution.last_completed_step
+            if execution is not None
+            else None
+        ),
+        current_step=(
+            execution.current_step
+            if execution is not None
+            else None
+        ),
+        last_failed_step=(
+            execution.last_failed_step
+            if execution is not None
+            else None
+        ),
+    )
+    return {
+        "chain_total": len(projections),
+        "chain_completed": completed_stage_count(projections),
+        "chain_stages": [
+            ContractChainStageResponse.from_projection(stage)
+            for stage in projections
+        ],
+    }
+
+
 class BatchContractExecutionPreflightResponse(BaseModel):
     batch_id: UUID
     item_id: UUID
@@ -781,6 +841,9 @@ class BatchContractExecutionPreflightResponse(BaseModel):
     resumable: bool
     checked_at: datetime
     can_execute: bool
+    chain_total: int
+    chain_completed: int
+    chain_stages: list[ContractChainStageResponse]
     issues: list[BatchContractExecutionIssueResponse]
 
     @classmethod
@@ -872,6 +935,7 @@ class BatchContractExecutionPreflightResponse(BaseModel):
             resumable=preflight.resumable,
             checked_at=preflight.checked_at,
             can_execute=preflight.can_execute,
+            **_chain_response_data(execution),
             issues=[
                 BatchContractExecutionIssueResponse(
                     code=issue.code,
@@ -916,6 +980,9 @@ class BatchContractExecutionResponse(BaseModel):
     operational_message: str
     error_code: str | None
     technical_detail: str | None
+    chain_total: int
+    chain_completed: int
+    chain_stages: list[ContractChainStageResponse]
 
     @classmethod
     def from_domain(
@@ -975,6 +1042,7 @@ class BatchContractExecutionResponse(BaseModel):
             operational_message=result.operational_message,
             error_code=result.error_code,
             technical_detail=result.technical_detail,
+            **_chain_response_data(result.execution),
         )
 
 

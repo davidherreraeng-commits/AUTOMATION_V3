@@ -268,6 +268,11 @@ def test_default_mode_should_simulate_and_publish_evidence(
         assert preflight_payload["writes_to_portal"] is False
         assert preflight_payload["real_write_enabled"] is False
         assert preflight_payload["can_execute"] is True
+        assert preflight_payload["chain_total"] == 13
+        assert preflight_payload["chain_completed"] == 0
+        assert [
+            stage["code"] for stage in preflight_payload["chain_stages"]
+        ] == [f"C{index}" for index in range(1, 14)]
         required = preflight_payload["required_confirmation"]
         assert required == "SIMULAR CONTRATO 70-2026"
 
@@ -284,6 +289,10 @@ def test_default_mode_should_simulate_and_publish_evidence(
         assert payload["batch_status"] == "READY"
         assert payload["execution_status"] == "COMPLETED"
         assert payload["evidence_count"] == 11
+        assert payload["chain_total"] == 13
+        assert payload["chain_completed"] == 13
+        assert payload["chain_stages"][7]["code"] == "C8"
+        assert payload["chain_stages"][7]["irreversible_boundary"] is True
         assert payload["correlation_id"]
         assert executor.calls == []
 
@@ -295,7 +304,23 @@ def test_default_mode_should_simulate_and_publish_evidence(
         assert evidence_payload["mode"] == "DRY_RUN"
         assert evidence_payload["actor_username"] == "jefe"
         assert evidence_payload["evidence_count"] == 11
+        assert evidence_payload["events"][0]["metadata"][
+            "chain_stage_codes"
+        ] == ["C1"]
+        general_event = next(
+            event
+            for event in evidence_payload["events"]
+            if event["step"] == "GENERAL_DATA_COMPLETED"
+        )
+        assert general_event["metadata"]["chain_stage_codes"] == [
+            "C5",
+            "C6",
+            "C7",
+        ]
         assert evidence_payload["events"][-1]["step"] == "COMPLETED"
+        assert evidence_payload["events"][-1]["metadata"][
+            "chain_stage_codes"
+        ] == ["C13"]
 
         status_response = client.get(endpoint)
         assert status_response.status_code == 200
