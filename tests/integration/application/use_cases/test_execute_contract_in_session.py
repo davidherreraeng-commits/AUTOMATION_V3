@@ -170,3 +170,76 @@ def test_should_resume_existing_checkpoint_in_new_controlled_session(
     assert resumed.execution.attempt_count == 2
     assert sessions.close_calls == 2
     assert checkpoints.get(execution_id).status is ExecutionStatus.COMPLETED
+
+
+@dataclass
+class FreshPortalSessionFactory:
+    portals: list[FakePortal]
+    open_calls: list[str] = field(default_factory=list)
+    close_calls: int = 0
+
+    @contextmanager
+    def open(self, *, dependency: str):
+        self.open_calls.append(dependency)
+        portal = self.portals[len(self.open_calls) - 1]
+        try:
+            yield OpenedContractPortalSession(
+                portal=portal,
+                profile="v2026_07",
+            )
+        finally:
+            self.close_calls += 1
+
+
+def test_should_replay_transient_form_before_resuming_c5_in_new_session(
+    tmp_path: Path,
+) -> None:
+    first_portal = FakePortal()
+    first_portal.errors[ContractStep.GENERAL_DATA_COMPLETED] = [
+        PortalTimeoutError("El catálogo no respondió.")
+    ]
+    resumed_portal = FakePortal()
+    sessions = FreshPortalSessionFactory(
+        portals=[first_portal, resumed_portal],
+    )
+    repository = SQLiteExecutionRepository(tmp_path / "transient-replay.db")
+    checkpoints = ExecutionCheckpointService(repository)
+    use_case = ExecuteContractInSession(
+        sessions=sessions,
+        checkpoints=checkpoints,
+    )
+    contract = build_contract()
+
+    interrupted = use_case.execute(contract=contract)
+
+    assert interrupted.retry_pending
+    assert (
+        interrupted.execution.last_completed_step
+        is ContractStep.HEADER_VALIDATED
+    )
+    assert (
+        interrupted.execution.last_failed_step
+        is ContractStep.GENERAL_DATA_COMPLETED
+    )
+
+    resumed = use_case.execute(
+        contract=contract,
+        execution_id=interrupted.execution.execution_id,
+    )
+
+    assert resumed.completed
+    assert resumed.execution.attempt_count == 2
+    assert resumed_portal.execute_calls[:3] == [
+        ContractStep.ASSISTANT_OPENED,
+        ContractStep.HEADER_COMPLETED,
+        ContractStep.HEADER_VALIDATED,
+    ]
+    assert resumed_portal.execute_calls[3:] == [
+        ContractStep.GENERAL_DATA_COMPLETED,
+        ContractStep.CONTRACT_SAVED,
+        ContractStep.SUPERVISOR_LINKED,
+        ContractStep.AVAILABILITY_LINKED,
+        ContractStep.BUDGET_REGISTER_LINKED,
+        ContractStep.ADDITIONAL_DATES_LINKED,
+    ]
+    assert sessions.close_calls == 2
