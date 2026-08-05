@@ -546,6 +546,22 @@ def revoke_selected_contract_real_write_authorization(
 
 
 
+def _institutional_plan_blocked_error(
+    error: BatchContractExecutionBlockedError,
+) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "INSTITUTIONAL_TEST_PLAN_BLOCKED",
+            "message": str(error),
+            "issues": [
+                {"code": code, "message": message}
+                for code, message in error.issues
+            ],
+        },
+    )
+
+
 def _institutional_plan_error(error: Exception) -> HTTPException:
     if isinstance(error, InstitutionalTestPlanNotFoundError):
         return HTTPException(
@@ -631,17 +647,7 @@ def create_selected_contract_institutional_plan(
                 detail=str(error),
             ) from error
         if isinstance(error, BatchContractExecutionBlockedError):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "INSTITUTIONAL_TEST_PLAN_BLOCKED",
-                    "message": str(error),
-                    "issues": [
-                        {"code": code, "message": message}
-                        for code, message in error.issues
-                    ],
-                },
-            ) from error
+            raise _institutional_plan_blocked_error(error) from error
         raise _institutional_plan_error(error) from error
 
     return InstitutionalTestPlanResponse.from_domain(
@@ -722,6 +728,8 @@ def diagnose_selected_contract_institutional_plan(
             batch_id=batch_id,
             item_id=item_id,
         )
+    except BatchContractExecutionBlockedError as error:
+        raise _institutional_plan_blocked_error(error) from error
     except (
         InstitutionalTestPlanDisabledError,
         InstitutionalTestPlanNotFoundError,
@@ -785,6 +793,8 @@ def arm_selected_contract_institutional_plan(
             batch_id=batch_id,
             item_id=item_id,
         )
+    except BatchContractExecutionBlockedError as error:
+        raise _institutional_plan_blocked_error(error) from error
     except (
         InstitutionalTestPlanDisabledError,
         InstitutionalTestPlanConfirmationError,

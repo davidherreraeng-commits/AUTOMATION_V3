@@ -46,6 +46,14 @@ class InstitutionalTestPlanService:
             "EXECUTION_TERMINAL",
         }
     )
+    READ_ONLY_IGNORED_ISSUES = PREPARATION_IGNORED_ISSUES | frozenset(
+        {
+            "CREDENTIALS_NOT_VERIFIED",
+            "CREDENTIALS_TEST_DATE_MISSING",
+            "CREDENTIALS_TEST_EXPIRED",
+            "TEST_VALUES_DETECTED",
+        }
+    )
 
     def __init__(
         self,
@@ -107,6 +115,7 @@ class InstitutionalTestPlanService:
             batch_id=batch_id,
             item_id=item_id,
             dependency=dependency,
+            ignored_issues=self.READ_ONLY_IGNORED_ISSUES,
         )
         contract_number = base.item.contract.contract_number
         required = self.required_create_confirmation(contract_number)
@@ -162,7 +171,7 @@ class InstitutionalTestPlanService:
         str,
         str,
     ]:
-        base = self._prepare_contract(
+        base = self._load_contract_context(
             batch_id=batch_id,
             item_id=item_id,
             dependency=dependency,
@@ -201,6 +210,7 @@ class InstitutionalTestPlanService:
             batch_id=batch_id,
             item_id=item_id,
             dependency=dependency,
+            ignored_issues=self.READ_ONLY_IGNORED_ISSUES,
         )
         current = self._require_plan(
             plan_id=plan_id,
@@ -284,7 +294,7 @@ class InstitutionalTestPlanService:
         actor_user_id: int | None,
         confirmation: str,
     ) -> InstitutionalTestPlan:
-        base = self._prepare_contract(
+        base = self._load_contract_context(
             batch_id=batch_id,
             item_id=item_id,
             dependency=dependency,
@@ -402,21 +412,39 @@ class InstitutionalTestPlanService:
         batch_id: UUID,
         item_id: UUID,
         dependency: str,
+        ignored_issues: frozenset[str] | None = None,
     ):
-        base = self._executions.preflight(
+        base = self._load_contract_context(
             batch_id=batch_id,
             item_id=item_id,
             dependency=dependency,
         )
+        ignored = (
+            self.PREPARATION_IGNORED_ISSUES
+            if ignored_issues is None
+            else ignored_issues
+        )
         blocking = tuple(
             (issue.code, issue.message)
             for issue in base.issues
-            if issue.blocking
-            and issue.code not in self.PREPARATION_IGNORED_ISSUES
+            if issue.blocking and issue.code not in ignored
         )
         if blocking:
             raise BatchContractExecutionBlockedError(blocking)
         return base
+
+    def _load_contract_context(
+        self,
+        *,
+        batch_id: UUID,
+        item_id: UUID,
+        dependency: str,
+    ):
+        return self._executions.preflight(
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency=dependency,
+        )
 
     def _ensure_enabled(self) -> None:
         if not self._enabled:

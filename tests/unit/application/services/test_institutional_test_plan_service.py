@@ -13,13 +13,19 @@ from application.services.institutional_test_plan_service import (
     InstitutionalTestPlanService,
 )
 from domain.enums import InstitutionalTestPlanStatus
-from domain.errors import InstitutionalTestPlanConfirmationError
+from domain.errors import (
+    BatchContractExecutionBlockedError,
+    InstitutionalTestPlanConfirmationError,
+)
 
 
 class FakeExecutionService:
+    def __init__(self, issues=()) -> None:
+        self.issues = tuple(issues)
+
     def preflight(self, *, batch_id, item_id, dependency):
         return SimpleNamespace(
-            issues=(),
+            issues=self.issues,
             batch=SimpleNamespace(dependency=dependency),
             item=SimpleNamespace(
                 contract=SimpleNamespace(contract_number="70-2026")
@@ -145,3 +151,76 @@ def test_failed_read_only_diagnostic_should_keep_plan_in_draft(tmp_path) -> None
     issue = service.issue_for_preflight(checked)
     assert issue is not None
     assert issue[0] == "INSTITUTIONAL_TEST_PLAN_DIAGNOSTIC_REQUIRED"
+
+
+def test_read_only_plan_should_ignore_real_write_only_blockers(tmp_path) -> None:
+    repository = SQLiteInstitutionalTestPlanRepository(
+        tmp_path / "rpa.sqlite3"
+    )
+    repository.initialize()
+    issues = (
+        SimpleNamespace(
+            code="CREDENTIALS_TEST_EXPIRED",
+            message="La prueba de credenciales expiró.",
+            blocking=True,
+        ),
+        SimpleNamespace(
+            code="TEST_VALUES_DETECTED",
+            message="El contrato contiene valores de prueba.",
+            blocking=True,
+        ),
+    )
+    probe = FakePortalProbeService()
+    service = InstitutionalTestPlanService(
+        repository=repository,
+        executions=FakeExecutionService(issues),
+        portal_probe=probe,
+        enabled=True,
+    )
+    batch_id = uuid4()
+    item_id = uuid4()
+
+    plan, events, contract_number, dependency = service.status(
+        batch_id=batch_id,
+        item_id=item_id,
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+    )
+    assert plan is None
+    assert events == ()
+    assert contract_number == "70-2026"
+    assert dependency == "Adquisiciones"
+
+    created = service.create(
+        batch_id=batch_id,
+        item_id=item_id,
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+        confirmation="CREAR PLAN INSTITUCIONAL 70-2026",
+    )
+    assert created.status is InstitutionalTestPlanStatus.DRAFT
+
+    checked = service.run_read_only_diagnostic(
+        plan_id=created.plan_id,
+        batch_id=batch_id,
+        item_id=item_id,
+        dependency="Adquisiciones",
+        actor_username="jefe",
+        actor_user_id=1,
+    )
+    assert checked.status is InstitutionalTestPlanStatus.READY
+    assert probe.calls == 1
+
+    with pytest.raises(BatchContractExecutionBlockedError) as captured:
+        service.arm(
+            plan_id=created.plan_id,
+            batch_id=batch_id,
+            item_id=item_id,
+            dependency="Adquisiciones",
+            actor_username="jefe",
+            actor_user_id=1,
+            confirmation="ARMAR PRUEBA INSTITUCIONAL 70-2026",
+        )
+    assert "valores de prueba" in str(captured.value)

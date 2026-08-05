@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID
@@ -113,7 +113,7 @@ def settings(tmp_path: Path) -> Settings:
     )
 
 
-def workbook_bytes() -> bytes:
+def workbook_bytes(*, test_values: bool = False) -> bytes:
     stream = BytesIO()
     workbook = Workbook()
     sheet = workbook.active
@@ -126,7 +126,7 @@ def workbook_bytes() -> bytes:
             "Servicio institucional.",
             "20/01/2026",
             "21/01/2026",
-            "$ 1.476.190",
+            "$ 1" if test_values else "$ 1.476.190",
             180,
             "Contratación Directa",
             "Prestación de Servicios",
@@ -137,7 +137,7 @@ def workbook_bytes() -> bytes:
             "71693738",
             "235097",
             "950172",
-            "$ 1.476.190",
+            "$ 1" if test_values else "$ 1.476.190",
         ]
     )
     workbook.save(stream)
@@ -145,7 +145,13 @@ def workbook_bytes() -> bytes:
     return stream.getvalue()
 
 
-def prepare(client: TestClient, app, role=UserRole.SUPERUSER):
+def prepare(
+    client: TestClient,
+    app,
+    role=UserRole.SUPERUSER,
+    *,
+    test_values: bool = False,
+):
     app.state.user_repository.create(
         username="jefe",
         password_hash=app.state.password_hasher.hash("Clave2026"),
@@ -172,7 +178,7 @@ def prepare(client: TestClient, app, role=UserRole.SUPERUSER):
         files={
             "file": (
                 "contratos.xlsx",
-                workbook_bytes(),
+                workbook_bytes(test_values=test_values),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         },
@@ -295,3 +301,52 @@ def test_operator_should_not_manage_institutional_plan(tmp_path: Path) -> None:
                 "confirmation": "CREAR PLAN INSTITUCIONAL 70-2026"
             },
         ).status_code == 403
+
+
+def test_status_and_creation_should_allow_read_only_preparation_blockers(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        settings(tmp_path),
+        portal_credential_verifier=FakeVerifier(),
+        batch_portal_probe=FakeReadOnlyProbe(),
+        contract_executor=FakeContractExecutor(),
+    )
+
+    with TestClient(app) as client:
+        batch, item, endpoint = prepare(
+            client,
+            app,
+            test_values=True,
+        )
+        app.state.portal_credential_repository.record_test_result(
+            dependency="Adquisiciones",
+            tested_at=datetime.now(UTC) - timedelta(hours=48),
+            success=True,
+            code="AUTHENTICATED",
+        )
+
+        status_response = client.get(endpoint)
+        assert status_response.status_code == 200
+        assert status_response.json()["plan_id"] is None
+
+        created = client.post(
+            endpoint,
+            json={
+                "confirmation": "CREAR PLAN INSTITUCIONAL 70-2026"
+            },
+        )
+        assert created.status_code == 201
+        assert created.json()["status"] == "DRAFT"
+
+        diagnostic = client.post(
+            f"{endpoint}/diagnostic",
+            json={"plan_id": created.json()["plan_id"]},
+        )
+        assert diagnostic.status_code == 409
+        assert diagnostic.json()["detail"]["code"] == (
+            "INSTITUTIONAL_TEST_PLAN_DIAGNOSTIC_BLOCKED"
+        )
+        assert "credenciales expiró" in (
+            diagnostic.json()["detail"]["message"]
+        )
