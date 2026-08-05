@@ -15,6 +15,7 @@ from application.ports.contract_executor import ContractExecutor
 from application.ports.portal_credential_repository import (
     PortalCredentialRepository,
 )
+from application.services.contract_value_policy import ContractValuePolicy
 from application.workflow.checkpoint_service import ExecutionCheckpointService
 from domain.enums import ExecutionStatus
 from domain.enums.batch_status import BatchContractStatus, BatchStatus
@@ -75,6 +76,7 @@ class BatchContractExecutionService:
         execution_enabled: bool,
         credential_max_age_hours: int = 24,
         reject_unit_test_values: bool = True,
+        allowed_nominal_value_contracts: tuple[str, ...] = (),
     ) -> None:
         if credential_max_age_hours <= 0:
             raise ValueError(
@@ -89,7 +91,10 @@ class BatchContractExecutionService:
         self._credential_max_age = timedelta(
             hours=credential_max_age_hours
         )
-        self._reject_unit_test_values = bool(reject_unit_test_values)
+        self._value_policy = ContractValuePolicy(
+            reject_nominal_values=reject_unit_test_values,
+            allowed_contract_numbers=allowed_nominal_value_contracts,
+        )
         self._active_lock = Lock()
         self._active_items: set[tuple[UUID, UUID]] = set()
 
@@ -282,17 +287,13 @@ class BatchContractExecutionService:
                 )
             )
 
-        if self._reject_unit_test_values and (
-            contract.amount <= Decimal("1")
-            or contract.budget.gross_total <= Decimal("1")
-        ):
+        value_assessment = self._value_policy.assess(contract)
+        if value_assessment is not None:
             issues.append(
                 BatchContractExecutionIssue(
-                    code="TEST_VALUES_DETECTED",
-                    message=(
-                        "El contrato contiene valores unitarios de prueba "
-                        "y no puede enviarse al portal real."
-                    ),
+                    code=value_assessment.code,
+                    message=value_assessment.message,
+                    blocking=value_assessment.blocking,
                 )
             )
 

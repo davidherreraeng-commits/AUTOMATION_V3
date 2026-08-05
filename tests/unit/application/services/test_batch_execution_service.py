@@ -334,3 +334,70 @@ def test_start_should_not_claim_batch_when_preflight_is_blocked(
         assert current.status is BatchStatus.READY
     finally:
         service.shutdown()
+
+def test_preflight_should_allow_explicit_nominal_contract_in_batch(
+    tmp_path: Path,
+) -> None:
+    batches, credentials = repositories(tmp_path)
+    stored = create_batch(
+        batches,
+        validation="e" * 32,
+        amount=Decimal("1"),
+    )
+    configure_credentials(credentials)
+    service = BatchExecutionService(
+        batches=batches,
+        credentials=credentials,
+        runner=SuccessRunner(),
+        execution_enabled=True,
+        cipher_configured=True,
+        reject_unit_test_values=True,
+        allowed_nominal_value_contracts=("70-2026",),
+    )
+    try:
+        result = service.preflight(
+            batch_id=stored.batch_id,
+            dependency="Adquisiciones",
+        )
+        issues = {issue.code: issue for issue in result.issues}
+        assert "TEST_VALUES_DETECTED" not in issues
+        assert (
+            issues["NOMINAL_VALUE_INSTITUTIONALLY_ALLOWED"].blocking
+            is False
+        )
+        assert result.can_execute is True
+    finally:
+        service.shutdown()
+
+
+def test_preflight_should_keep_unlisted_nominal_contract_blocked(
+    tmp_path: Path,
+) -> None:
+    batches, credentials = repositories(tmp_path)
+    stored = create_batch(
+        batches,
+        validation="f" * 32,
+        amount=Decimal("1"),
+    )
+    configure_credentials(credentials)
+    service = BatchExecutionService(
+        batches=batches,
+        credentials=credentials,
+        runner=SuccessRunner(),
+        execution_enabled=True,
+        cipher_configured=True,
+        reject_unit_test_values=True,
+        allowed_nominal_value_contracts=("71-2026",),
+    )
+    try:
+        result = service.preflight(
+            batch_id=stored.batch_id,
+            dependency="Adquisiciones",
+        )
+        assert "TEST_VALUES_DETECTED" in {
+            issue.code for issue in result.issues
+        }
+        assert result.can_execute is False
+    finally:
+        service.shutdown()
+

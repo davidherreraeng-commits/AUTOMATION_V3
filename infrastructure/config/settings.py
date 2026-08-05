@@ -86,6 +86,9 @@ class Settings(BaseSettings):
         le=168,
     )
     batch_execution_reject_unit_test_values: bool = True
+    batch_execution_nominal_value_contract_allowlist: Annotated[
+        list[str], NoDecode
+    ] = Field(default_factory=list)
     batch_execution_workers: int = Field(default=1, ge=1, le=4)
     real_write_authorization_ttl_seconds: int = Field(
         default=300,
@@ -114,6 +117,40 @@ class Settings(BaseSettings):
                 for item in value.split(",")
                 if item.strip()
             ]
+        return value
+
+    @field_validator(
+        "batch_execution_nominal_value_contract_allowlist",
+        mode="before",
+    )
+    @classmethod
+    def parse_nominal_value_contract_allowlist(
+        cls,
+        value: object,
+    ) -> object:
+        if isinstance(value, str):
+            value = [
+                item.strip()
+                for item in value.split(",")
+                if item.strip()
+            ]
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set, frozenset)):
+            normalized = []
+            for item in value:
+                contract_number = " ".join(
+                    str(item).strip().upper().split()
+                )
+                if not contract_number:
+                    continue
+                if contract_number == "*":
+                    raise ValueError(
+                        "La lista de valores nominales no admite '*'."
+                    )
+                if contract_number not in normalized:
+                    normalized.append(contract_number)
+            return normalized
         return value
 
     @field_validator("api_prefix")

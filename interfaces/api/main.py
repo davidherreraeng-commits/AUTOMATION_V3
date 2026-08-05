@@ -219,6 +219,10 @@ def create_app(
                     resolved_settings
                     .batch_execution_reject_unit_test_values
                 ),
+                allowed_nominal_value_contracts=tuple(
+                    resolved_settings
+                    .batch_execution_nominal_value_contract_allowlist
+                ),
             )
         )
 
@@ -335,6 +339,10 @@ def create_app(
             reject_unit_test_values=(
                 resolved_settings
                 .batch_execution_reject_unit_test_values
+            ),
+            allowed_nominal_value_contracts=tuple(
+                resolved_settings
+                .batch_execution_nominal_value_contract_allowlist
             ),
             max_workers=resolved_settings.batch_execution_workers,
         )

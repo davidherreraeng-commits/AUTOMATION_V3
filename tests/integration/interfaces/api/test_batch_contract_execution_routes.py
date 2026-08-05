@@ -104,7 +104,11 @@ class FakeContractExecutor:
         )
 
 
-def settings(tmp_path: Path) -> Settings:
+def settings(
+    tmp_path: Path,
+    *,
+    nominal_value_contract_allowlist: tuple[str, ...] = (),
+) -> Settings:
     return Settings(
         _env_file=None,
         environment="test",
@@ -118,6 +122,9 @@ def settings(tmp_path: Path) -> Settings:
         cors_origins=["http://testserver"],
         batch_execution_enabled=True,
         batch_execution_reject_unit_test_values=True,
+        batch_execution_nominal_value_contract_allowlist=list(
+            nominal_value_contract_allowlist
+        ),
     )
 
 
@@ -143,7 +150,11 @@ def login(client: TestClient, username: str) -> None:
     assert response.status_code == 200
 
 
-def workbook_bytes() -> bytes:
+def workbook_bytes(
+    *,
+    amount: object = "$ 1.476.190",
+    gross_total: object = "$ 1.476.190",
+) -> bytes:
     stream = BytesIO()
     workbook = Workbook()
     worksheet = workbook.active
@@ -157,7 +168,7 @@ def workbook_bytes() -> bytes:
             "Servicio institucional.",
             "20/01/2026",
             "21/01/2026",
-            "$ 1.476.190",
+            amount,
             180,
             "Contratación Directa",
             "Prestación de Servicios",
@@ -168,7 +179,7 @@ def workbook_bytes() -> bytes:
             "71693738",
             "235097",
             "950172",
-            "$ 1.476.190",
+            gross_total,
         ]
     )
     workbook.save(stream)
@@ -176,13 +187,21 @@ def workbook_bytes() -> bytes:
     return stream.getvalue()
 
 
-def create_batch(client: TestClient) -> dict:
+def create_batch(
+    client: TestClient,
+    *,
+    amount: object = "$ 1.476.190",
+    gross_total: object = "$ 1.476.190",
+) -> dict:
     validation = client.post(
         "/api/v1/files/validate",
         files={
             "file": (
                 "contratos.xlsx",
-                workbook_bytes(),
+                workbook_bytes(
+                    amount=amount,
+                    gross_total=gross_total,
+                ),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         },
@@ -590,5 +609,93 @@ def test_should_revoke_authorization_and_reject_its_token(
             rejected.json()["detail"]["code"]
             == "REAL_WRITE_AUTHORIZATION_REVOKED"
         )
+        assert executor.calls == []
+
+def test_real_preflight_should_report_allowed_institutional_nominal_value(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("RPA_REAL_WRITE_AUTHORIZATION", raising=False)
+    executor = FakeContractExecutor()
+    app = create_app(
+        settings(
+            tmp_path,
+            nominal_value_contract_allowlist=("70-2026",),
+        ),
+        portal_credential_verifier=FakeVerifier(),
+        contract_executor=executor,
+        batch_portal_probe=object(),
+    )
+
+    with TestClient(app) as client:
+        executor.repository = app.state.execution_repository
+        create_account(app, username="jefe", role=UserRole.SUPERUSER)
+        login(client, "jefe")
+        save_and_test_credentials(client)
+        batch = create_batch(
+            client,
+            amount=1,
+            gross_total=1,
+        )
+        _, endpoint = endpoint_for(batch)
+
+        preflight = client.get(
+            f"{endpoint}/preflight",
+            params={"mode": "REAL"},
+        )
+
+        assert preflight.status_code == 200
+        payload = preflight.json()
+        issues = {issue["code"]: issue for issue in payload["issues"]}
+        assert "TEST_VALUES_DETECTED" not in issues
+        assert (
+            issues["NOMINAL_VALUE_INSTITUTIONALLY_ALLOWED"]["blocking"]
+            is False
+        )
+        assert payload["can_execute"] is False
+        assert "EXECUTION_DISABLED" in issues
+        assert executor.calls == []
+
+
+def test_real_preflight_should_block_unlisted_nominal_value(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("RPA_REAL_WRITE_AUTHORIZATION", raising=False)
+    executor = FakeContractExecutor()
+    app = create_app(
+        settings(
+            tmp_path,
+            nominal_value_contract_allowlist=("71-2026",),
+        ),
+        portal_credential_verifier=FakeVerifier(),
+        contract_executor=executor,
+        batch_portal_probe=object(),
+    )
+
+    with TestClient(app) as client:
+        executor.repository = app.state.execution_repository
+        create_account(app, username="jefe", role=UserRole.SUPERUSER)
+        login(client, "jefe")
+        save_and_test_credentials(client)
+        batch = create_batch(
+            client,
+            amount=1,
+            gross_total=1,
+        )
+        _, endpoint = endpoint_for(batch)
+
+        preflight = client.get(
+            f"{endpoint}/preflight",
+            params={"mode": "REAL"},
+        )
+
+        assert preflight.status_code == 200
+        issues = {
+            issue["code"]: issue
+            for issue in preflight.json()["issues"]
+        }
+        assert issues["TEST_VALUES_DETECTED"]["blocking"] is True
+        assert "NOMINAL_VALUE_INSTITUTIONALLY_ALLOWED" not in issues
         assert executor.calls == []
 

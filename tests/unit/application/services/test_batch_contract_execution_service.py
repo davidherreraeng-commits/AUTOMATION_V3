@@ -172,6 +172,7 @@ def build_service(
     statuses: list[ExecutionStatus],
     count: int = 1,
     amount: Decimal = Decimal("1476190"),
+    allowed_nominal_value_contracts: tuple[str, ...] = (),
 ):
     database = tmp_path / "single-contract.sqlite3"
     batches = SQLiteBatchRepository(database)
@@ -209,6 +210,9 @@ def build_service(
         executor=executor,
         execution_enabled=True,
         reject_unit_test_values=True,
+        allowed_nominal_value_contracts=(
+            allowed_nominal_value_contracts
+        ),
     )
     return batches, executions, stored, executor, service
 
@@ -384,3 +388,52 @@ def test_preflight_should_block_unit_test_values(
             dependency="Adquisiciones",
             confirmation="EJECUTAR CONTRATO 70-2026",
         )
+
+def test_preflight_should_allow_explicit_institutional_nominal_value(
+    tmp_path: Path,
+) -> None:
+    _, _, batch, _, service = build_service(
+        tmp_path,
+        statuses=[ExecutionStatus.COMPLETED],
+        amount=Decimal("1"),
+        allowed_nominal_value_contracts=(" 70-2026 ",),
+    )
+    item = batch.contracts[0]
+
+    preflight = service.preflight(
+        batch_id=batch.batch_id,
+        item_id=item.item_id,
+        dependency="Adquisiciones",
+    )
+
+    issues = {issue.code: issue for issue in preflight.issues}
+    assert "TEST_VALUES_DETECTED" not in issues
+    assert (
+        issues["NOMINAL_VALUE_INSTITUTIONALLY_ALLOWED"].blocking
+        is False
+    )
+    assert preflight.can_execute is True
+
+
+def test_preflight_should_not_allow_partial_nominal_value_match(
+    tmp_path: Path,
+) -> None:
+    _, _, batch, _, service = build_service(
+        tmp_path,
+        statuses=[ExecutionStatus.COMPLETED],
+        amount=Decimal("1"),
+        allowed_nominal_value_contracts=("70-202",),
+    )
+    item = batch.contracts[0]
+
+    preflight = service.preflight(
+        batch_id=batch.batch_id,
+        item_id=item.item_id,
+        dependency="Adquisiciones",
+    )
+
+    assert "TEST_VALUES_DETECTED" in {
+        issue.code for issue in preflight.issues
+    }
+    assert preflight.can_execute is False
+

@@ -95,7 +95,11 @@ class FakeContractExecutor:
         )
 
 
-def settings(tmp_path: Path) -> Settings:
+def settings(
+    tmp_path: Path,
+    *,
+    nominal_value_contract_allowlist: tuple[str, ...] = (),
+) -> Settings:
     return Settings(
         _env_file=None,
         environment="test",
@@ -111,6 +115,9 @@ def settings(tmp_path: Path) -> Settings:
         batch_execution_enabled=True,
         institutional_test_plan_enabled=True,
         institutional_test_plan_arming_enabled=True,
+        batch_execution_nominal_value_contract_allowlist=list(
+            nominal_value_contract_allowlist
+        ),
     )
 
 
@@ -408,4 +415,124 @@ def test_armed_plan_should_not_execute_when_real_write_barriers_are_off(
         assert blocked.status_code == 409
         detail = blocked.json()["detail"]
         assert "EXECUTION_DISABLED" in str(detail)
+
+def test_nominal_institutional_contract_should_reach_armed_when_allowlisted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("RPA_REAL_WRITE_AUTHORIZATION", raising=False)
+    probe = FakeReadOnlyProbe()
+    app = create_app(
+        settings(
+            tmp_path,
+            nominal_value_contract_allowlist=("70-2026",),
+        ),
+        portal_credential_verifier=FakeVerifier(),
+        batch_portal_probe=probe,
+        contract_executor=FakeContractExecutor(),
+    )
+
+    with TestClient(app) as client:
+        batch, item, endpoint = prepare(
+            client,
+            app,
+            test_values=True,
+        )
+        created = client.post(
+            endpoint,
+            json={
+                "confirmation": "CREAR PLAN INSTITUCIONAL 70-2026"
+            },
+        )
+        assert created.status_code == 201
+        plan_id = created.json()["plan_id"]
+
+        diagnostic = client.post(
+            f"{endpoint}/diagnostic",
+            json={"plan_id": plan_id},
+        )
+        assert diagnostic.status_code == 200
+        assert diagnostic.json()["status"] == "READY"
+
+        armed = client.post(
+            f"{endpoint}/arm",
+            json={
+                "plan_id": plan_id,
+                "confirmation": "ARMAR PRUEBA INSTITUCIONAL 70-2026",
+            },
+        )
+        assert armed.status_code == 200
+        assert armed.json()["status"] == "ARMED"
+        assert armed.json()["execution_enabled_by_plan"] is False
+
+        execution_preflight = client.get(
+            (
+                f"/api/v1/batches/{batch['batch_id']}/contracts/"
+                f"{item['item_id']}/execution/preflight"
+            ),
+            params={"mode": "REAL"},
+        )
+        assert execution_preflight.status_code == 200
+        issues = {
+            issue["code"]: issue
+            for issue in execution_preflight.json()["issues"]
+        }
+        assert "TEST_VALUES_DETECTED" not in issues
+        assert (
+            issues["NOMINAL_VALUE_INSTITUTIONALLY_ALLOWED"]["blocking"]
+            is False
+        )
+        assert execution_preflight.json()["can_execute"] is False
+        assert "EXECUTION_DISABLED" in issues
+
+
+def test_unlisted_nominal_contract_should_still_reject_arming(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        settings(
+            tmp_path,
+            nominal_value_contract_allowlist=("71-2026",),
+        ),
+        portal_credential_verifier=FakeVerifier(),
+        batch_portal_probe=FakeReadOnlyProbe(),
+        contract_executor=FakeContractExecutor(),
+    )
+
+    with TestClient(app) as client:
+        _, _, endpoint = prepare(
+            client,
+            app,
+            test_values=True,
+        )
+        created = client.post(
+            endpoint,
+            json={
+                "confirmation": "CREAR PLAN INSTITUCIONAL 70-2026"
+            },
+        )
+        plan_id = created.json()["plan_id"]
+        diagnostic = client.post(
+            f"{endpoint}/diagnostic",
+            json={"plan_id": plan_id},
+        )
+        assert diagnostic.status_code == 200
+        assert diagnostic.json()["status"] == "READY"
+
+        armed = client.post(
+            f"{endpoint}/arm",
+            json={
+                "plan_id": plan_id,
+                "confirmation": "ARMAR PRUEBA INSTITUCIONAL 70-2026",
+            },
+        )
+
+        assert armed.status_code == 409
+        assert armed.json()["detail"]["code"] == (
+            "INSTITUTIONAL_TEST_PLAN_BLOCKED"
+        )
+        status = client.get(endpoint)
+        assert status.status_code == 200
+        assert status.json()["status"] == "READY"
+        assert status.json()["events"][-1]["event_type"] == "ARM_REJECTED"
 

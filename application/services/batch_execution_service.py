@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from threading import Lock
 from uuid import UUID
 
@@ -15,6 +14,7 @@ from application.ports.batch_execution_runner import (
     BatchExecutionRunner,
 )
 from application.ports.batch_repository import BatchRepository
+from application.services.contract_value_policy import ContractValuePolicy
 from application.ports.portal_credential_repository import (
     PortalCredentialRepository,
 )
@@ -42,6 +42,7 @@ class BatchExecutionService:
         cipher_configured: bool,
         credential_max_age_hours: int = 24,
         reject_unit_test_values: bool = True,
+        allowed_nominal_value_contracts: tuple[str, ...] = (),
         max_workers: int = 2,
     ) -> None:
         if credential_max_age_hours <= 0:
@@ -57,7 +58,10 @@ class BatchExecutionService:
         self._execution_enabled = bool(execution_enabled)
         self._cipher_configured = bool(cipher_configured)
         self._credential_max_age = timedelta(hours=credential_max_age_hours)
-        self._reject_unit_test_values = bool(reject_unit_test_values)
+        self._value_policy = ContractValuePolicy(
+            reject_nominal_values=reject_unit_test_values,
+            allowed_contract_numbers=allowed_nominal_value_contracts,
+        )
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="rpa-batch",
@@ -184,26 +188,58 @@ class BatchExecutionService:
                 )
             )
 
-        if self._reject_unit_test_values:
-            test_contracts = [
-                item.contract.contract_number
-                for item in batch.contracts
-                if item.contract.amount <= Decimal("1")
-                or item.contract.budget.gross_total <= Decimal("1")
-            ]
-            if test_contracts:
-                preview = ", ".join(test_contracts[:5])
-                suffix = "" if len(test_contracts) <= 5 else "…"
-                issues.append(
-                    BatchExecutionPreflightIssue(
-                        code="TEST_VALUES_DETECTED",
-                        message=(
-                            "El lote contiene valores unitarios de prueba ($1) "
-                            f"en: {preview}{suffix}. No se permite enviarlos al "
-                            "portal real."
-                        ),
-                    )
+        blocked_nominal_contracts: list[str] = []
+        allowed_nominal_contracts: list[str] = []
+        for item in batch.contracts:
+            assessment = self._value_policy.assess(item.contract)
+            if assessment is None:
+                continue
+            if assessment.blocking:
+                blocked_nominal_contracts.append(
+                    item.contract.contract_number
                 )
+            else:
+                allowed_nominal_contracts.append(
+                    item.contract.contract_number
+                )
+
+        if blocked_nominal_contracts:
+            preview = ", ".join(blocked_nominal_contracts[:5])
+            suffix = (
+                ""
+                if len(blocked_nominal_contracts) <= 5
+                else "…"
+            )
+            issues.append(
+                BatchExecutionPreflightIssue(
+                    code="TEST_VALUES_DETECTED",
+                    message=(
+                        "El lote contiene valores iguales o inferiores a $1 "
+                        "sin autorización nominal institucional explícita en: "
+                        f"{preview}{suffix}. No se permite enviarlos al portal "
+                        "real."
+                    ),
+                )
+            )
+
+        if allowed_nominal_contracts:
+            preview = ", ".join(allowed_nominal_contracts[:5])
+            suffix = (
+                ""
+                if len(allowed_nominal_contracts) <= 5
+                else "…"
+            )
+            issues.append(
+                BatchExecutionPreflightIssue(
+                    code="NOMINAL_VALUE_INSTITUTIONALLY_ALLOWED",
+                    message=(
+                        "Valor nominal institucional autorizado "
+                        f"explícitamente en: {preview}{suffix}. Las demás "
+                        "barreras de escritura real permanecen activas."
+                    ),
+                    blocking=False,
+                )
+            )
 
         return BatchExecutionPreflight(
             batch_id=batch.batch_id,
