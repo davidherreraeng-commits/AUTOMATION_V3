@@ -155,14 +155,6 @@ function CheckpointSummary({ data }) {
         <Typography variant="body2">
           Paso actual: <strong>{stepLabel(data.current_step)}</strong>
         </Typography>
-        {Number.isInteger(data.chain_total) && (
-          <Typography variant="body2">
-            Cadena integrada C1-C13:{" "}
-            <strong>
-              {data.chain_completed ?? 0}/{data.chain_total}
-            </strong>
-          </Typography>
-        )}
         {data.last_failed_step && (
           <Typography variant="body2" color="error.main">
             Último paso fallido:{" "}
@@ -387,6 +379,15 @@ function BatchContractExecutionPanel({
       return next;
     });
   }, [authorizationExpired, dialogItem]);
+
+  const confirmationPhraseMatches = useMemo(
+    () =>
+      confirmationMatches(
+        confirmation,
+        selectedPreflight?.required_confirmation,
+      ),
+    [confirmation, selectedPreflight],
+  );
 
   const confirmationValid = useMemo(
     () =>
@@ -1092,16 +1093,6 @@ function BatchContractExecutionPanel({
                     </Alert>
                   )}
 
-                {executionMode === "REAL" && (
-                  <Alert severity="warning" variant="outlined">
-                    <strong>Cadena completa C1-C13:</strong> C1-C7
-                    preparan y validan el formulario; C8 guarda el
-                    contrato; C9-C12 vinculan supervisor, CDP, RP y
-                    fechas; C13 confirma la finalización. La primera
-                    persistencia institucional ocurre en C8.
-                  </Alert>
-                )}
-
                 {executionMode === "REAL" && dialogItem && (
                   <InstitutionalTestPlanPanel
                     batchId={batch.batch_id}
@@ -1467,12 +1458,18 @@ function BatchContractExecutionPanel({
                       }
                       error={
                         Boolean(confirmation) &&
-                        !confirmationValid
+                        !confirmationPhraseMatches
                       }
                       helperText={
-                        confirmation && !confirmationValid
-                          ? "La frase no coincide."
-                          : "La comparación ignora mayúsculas y espacios repetidos."
+                        !confirmation
+                          ? "La comparación ignora mayúsculas y espacios repetidos."
+                          : !confirmationPhraseMatches
+                            ? "La frase no coincide."
+                            : !selectedPreflight.can_execute
+                              ? "La frase coincide, pero existen bloqueos de seguridad."
+                              : !confirmationValid
+                                ? "La frase coincide. Complete el plan y la autorización requeridos."
+                                : "La frase coincide."
                       }
                       disabled={Boolean(busyItemId)}
                     />

@@ -34,6 +34,7 @@ import { useEffect, useMemo, useState } from "react";
 import api from "../api/axiosConfig";
 import { useAuth } from "../auth/useAuth";
 import BatchContractExecutionPanel from "../components/BatchContractExecutionPanel";
+import { findProcessingBatch } from "../api/batchContractExecutionUtils";
 
 function getApiError(error, fallback) {
   const detail = error.response?.data?.detail;
@@ -109,6 +110,8 @@ function Home() {
   const [linkingAdditionalDates, setLinkingAdditionalDates] = useState(false);
   const [startingExecution, setStartingExecution] = useState(false);
   const [cancellingBatch, setCancellingBatch] = useState(false);
+  const [recoveringActiveBatch, setRecoveringActiveBatch] = useState(false);
+  const [activeBatchRecovered, setActiveBatchRecovered] = useState(false);
   const [snackbar, setSnackbar] = useState({
     open: false,
     severity: "success",
@@ -151,6 +154,53 @@ function Home() {
 
   const showMessage = (severity, message) => {
     setSnackbar({ open: true, severity, message });
+  };
+
+  const recoverActiveBatch = async ({ notify = true } = {}) => {
+    if (!user?.dependency || recoveringActiveBatch) return null;
+
+    setRecoveringActiveBatch(true);
+    try {
+      const response = await api.get("/batches", {
+        params: { limit: 50 },
+      });
+      const activeBatch = findProcessingBatch(response.data?.items);
+
+      if (!activeBatch) {
+        if (notify) {
+          showMessage(
+            "info",
+            "No existe un lote PROCESSING para recuperar en esta dependencia.",
+          );
+        }
+        return null;
+      }
+
+      setCreatedBatch(activeBatch);
+      setActiveBatchRecovered(true);
+      setPreflight(null);
+      setExecutionStatus(null);
+      if (notify) {
+        showMessage(
+          "success",
+          `Se recuperó el lote activo ${activeBatch.batch_id}.`,
+        );
+      }
+      return activeBatch;
+    } catch (error) {
+      if (notify) {
+        showMessage(
+          "error",
+          getApiError(
+            error,
+            "No fue posible recuperar el lote activo.",
+          ),
+        );
+      }
+      return null;
+    } finally {
+      setRecoveringActiveBatch(false);
+    }
   };
 
   const resetValidatedState = () => {
@@ -897,6 +947,30 @@ function Home() {
   };
 
   useEffect(() => {
+    if (
+      user?.role !== "SUPERUSER" ||
+      !user?.dependency ||
+      createdBatch
+    ) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const recover = async () => {
+      const recovered = await recoverActiveBatch({ notify: false });
+      if (cancelled || !recovered) return;
+      showMessage(
+        "info",
+        `Se reabrió el lote PROCESSING ${recovered.batch_id}.`,
+      );
+    };
+    recover();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.dependency, user?.role]);
+
+  useEffect(() => {
     if (!createdBatch || createdBatch.status !== "PROCESSING") return undefined;
     const timer = window.setInterval(refreshExecution, 1500);
     return () => window.clearInterval(timer);
@@ -952,7 +1026,11 @@ function Home() {
                 component="span"
                 variant="outlined"
                 startIcon={<UploadFileIcon />}
-                disabled={loading || creatingBatch}
+                disabled={
+                  loading ||
+                  creatingBatch ||
+                  createdBatch?.status === "PROCESSING"
+                }
               >
                 Seleccionar Excel
               </Button>
@@ -961,7 +1039,12 @@ function Home() {
             <Button
               variant="contained"
               onClick={validateSelectedFile}
-              disabled={!selectedFile || loading || creatingBatch}
+              disabled={
+                !selectedFile ||
+                loading ||
+                creatingBatch ||
+                createdBatch?.status === "PROCESSING"
+              }
               startIcon={
                 loading ? (
                   <CircularProgress size={18} color="inherit" />
@@ -1008,6 +1091,35 @@ function Home() {
           </Paper>
         </Stack>
       </Paper>
+
+      {createdBatch && !validation && (
+        <Paper elevation={1} sx={{ p: 3, borderRadius: 3, mt: 3 }}>
+          <Stack spacing={1.5}>
+            <Alert severity="info" icon={<PlaylistAddCheckIcon />}>
+              {activeBatchRecovered
+                ? "Se recuperó automáticamente el lote activo de la dependencia."
+                : "Hay un lote activo disponible para continuar."}
+            </Alert>
+            <Typography fontWeight="bold">Lote en ejecución recuperado</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Identificador: {createdBatch.batch_id}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Estado: {createdBatch.status} · Contratos: {createdBatch.selected_count}
+            </Typography>
+            <Alert severity="warning" variant="outlined">
+              No cree otro lote. Continúe el contrato PROCESSING desde este panel.
+            </Alert>
+            <BatchContractExecutionPanel
+              batch={createdBatch}
+              user={user}
+              onBatchChange={setCreatedBatch}
+              onBusyChange={setStartingExecution}
+              onNotify={showMessage}
+            />
+          </Stack>
+        </Paper>
+      )}
 
       {validation && (
         <Stack spacing={3} mt={3}>

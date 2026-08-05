@@ -437,3 +437,38 @@ def test_preflight_should_not_allow_partial_nominal_value_match(
     }
     assert preflight.can_execute is False
 
+def test_preflight_should_block_another_processing_batch_before_execution(
+    tmp_path: Path,
+) -> None:
+    batches, _, target, executor, service = build_service(
+        tmp_path,
+        statuses=[ExecutionStatus.COMPLETED],
+    )
+    active = create_batch(batches)
+    batches.claim_for_processing(
+        active.batch_id,
+        dependency="Adquisiciones",
+    )
+    item = target.contracts[0]
+
+    preflight = service.preflight(
+        batch_id=target.batch_id,
+        item_id=item.item_id,
+        dependency="Adquisiciones",
+    )
+
+    issues = {issue.code: issue for issue in preflight.issues}
+    assert preflight.can_execute is False
+    assert issues["DEPENDENCY_BUSY"].blocking is True
+    assert str(active.batch_id) in issues["DEPENDENCY_BUSY"].message
+
+    with pytest.raises(BatchContractExecutionBlockedError):
+        service.execute(
+            batch_id=target.batch_id,
+            item_id=item.item_id,
+            dependency="Adquisiciones",
+            confirmation="EJECUTAR CONTRATO 70-2026",
+        )
+
+    assert executor.calls == []
+

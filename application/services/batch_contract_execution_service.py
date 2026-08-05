@@ -158,6 +158,25 @@ class BatchContractExecutionService:
                 )
             )
 
+        processing_batch = self._batches.get_processing_by_dependency(
+            batch.dependency
+        )
+        if (
+            processing_batch is not None
+            and processing_batch.batch_id != batch.batch_id
+        ):
+            issues.append(
+                BatchContractExecutionIssue(
+                    code="DEPENDENCY_BUSY",
+                    message=(
+                        "Ya existe un lote en ejecución para la dependencia "
+                        f"'{batch.dependency}': "
+                        f"{processing_batch.batch_id}. Reanude ese lote "
+                        "antes de iniciar uno nuevo."
+                    ),
+                )
+            )
+
         other_processing = tuple(
             candidate
             for candidate in batch.contracts

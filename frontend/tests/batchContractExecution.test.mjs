@@ -8,6 +8,7 @@ import {
   confirmationMatches,
   contractActionLabel,
   formatAuthorizationCountdown,
+  findProcessingBatch,
   normalizeConfirmation,
 } from "../src/api/batchContractExecutionUtils.js";
 
@@ -245,5 +246,42 @@ test("un plan armado no habilita por sí solo la escritura real", () => {
 
   assert.equal(plan.status, "ARMED");
   assert.equal(plan.execution_enabled_by_plan, false);
+});
+
+test("recupera únicamente el lote PROCESSING de la dependencia", () => {
+  const active = findProcessingBatch([
+    { batch_id: "ready-1", status: "READY" },
+    { batch_id: "active-1", status: "PROCESSING" },
+    { batch_id: "cancelled-1", status: "CANCELLED" },
+  ]);
+
+  assert.equal(active?.batch_id, "active-1");
+  assert.equal(findProcessingBatch([]), null);
+  assert.equal(findProcessingBatch(null), null);
+});
+
+test("la coincidencia de frase es independiente de los bloqueos operativos", () => {
+  const preflight = {
+    can_execute: false,
+    required_confirmation: "EJECUTAR CONTRATO 70-2026",
+  };
+
+  assert.equal(
+    confirmationMatches(
+      "ejecutar contrato 70-2026",
+      preflight.required_confirmation,
+    ),
+    true,
+  );
+  assert.equal(
+    canSubmitContractExecution({
+      preflight,
+      mode: "REAL",
+      confirmation: "EJECUTAR CONTRATO 70-2026",
+      authorizationToken: "token",
+      institutionalPlanId: "plan",
+    }),
+    false,
+  );
 });
 

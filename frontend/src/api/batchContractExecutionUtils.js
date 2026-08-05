@@ -89,3 +89,10 @@ export function formatAuthorizationCountdown(seconds) {
   const remainder = value % 60;
   return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
+
+export function findProcessingBatch(batches) {
+  if (!Array.isArray(batches)) return null;
+  return (
+    batches.find((batch) => batch?.status === "PROCESSING") ?? null
+  );
+}
