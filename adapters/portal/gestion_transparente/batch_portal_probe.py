@@ -5195,7 +5195,7 @@ class SeleniumBatchPortalProbe:
                 "code": "GENERAL_CONTRACT_TYPE_SELECTION_FAILED",
                 "label": "Tipo de Contrato",
                 "allow_decorated_value": False,
-                "require_committed_state": False,
+                "require_committed_state": True,
                 "flag": "contract_type_selected",
             },
             {
@@ -6414,6 +6414,27 @@ class SeleniumBatchPortalProbe:
         click_modes = ("actions", "native", "javascript")
 
         for attempt in range(1, 5):
+            if (
+                require_committed_state
+                and self._resolved_autocomplete_matches(
+                    resolver=resolver,
+                    key=key,
+                    expected=expected,
+                    allow_decorated_value=allow_decorated_value,
+                )
+                and self._mui_autocomplete_has_selected_object(
+                    resolver=resolver,
+                    key=key,
+                )
+            ):
+                # Un valor ya comprometido puede conservar el popup abierto
+                # por el foco. Cerrarlo no exige borrar ni reescribir la
+                # selección. Este era el origen del bucle observado en C5.
+                self._blur_catalog_control(
+                    resolver=resolver,
+                    key=key,
+                )
+
             if self._wait_for_stable_autocomplete_selection(
                 waits=waits,
                 resolver=resolver,
@@ -7135,6 +7156,9 @@ class SeleniumBatchPortalProbe:
                 key,
                 timeout_seconds=min(2.0, self._timeout_seconds),
             )
+            # ESC cierra el listbox sin alterar el objeto seleccionado. TAB
+            # confirma el blur y permite comprobar la persistencia del valor.
+            current.send_keys(Keys.ESCAPE)
             current.send_keys(Keys.TAB)
         except Exception:
             return
@@ -7173,18 +7197,51 @@ class SeleniumBatchPortalProbe:
             key=key,
         )
 
+    def _mui_autocomplete_has_selected_object(
+        self,
+        *,
+        resolver: ElementResolver,
+        key: str,
+    ) -> bool:
+        """Detecta el objeto seleccionado aunque el popup siga abierto."""
+
+        try:
+            current = resolver.visible(
+                key,
+                timeout_seconds=min(0.75, self._timeout_seconds),
+            )
+            roots = current.find_elements(
+                By.XPATH,
+                "./ancestor::div[contains(concat(' ', "
+                "normalize-space(@class), ' '), "
+                "' MuiAutocomplete-root ')][1]",
+            )
+            if not roots:
+                return False
+
+            root = roots[0]
+            root_class = str(root.get_attribute("class") or "")
+            if "MuiAutocomplete-hasClearIcon" not in root_class:
+                return False
+
+            clear_buttons = root.find_elements(
+                By.CSS_SELECTOR,
+                "button.MuiAutocomplete-clearIndicator",
+            )
+            return any(
+                button.is_displayed() and button.is_enabled()
+                for button in clear_buttons
+            )
+        except Exception:
+            return False
+
     def _mui_autocomplete_selection_is_committed(
         self,
         *,
         resolver: ElementResolver,
         key: str,
     ) -> bool:
-        """Comprueba que Material UI conserva un objeto seleccionado.
-
-        El texto del ``input`` puede coincidir aunque React mantenga el valor
-        interno en ``null``. En el portal, una selección real cierra el popup y
-        monta ``MuiAutocomplete-hasClearIcon`` junto con el botón Clear.
-        """
+        """Comprueba que el objeto MUI permanece seleccionado tras el blur."""
 
         try:
             current = resolver.visible(
@@ -7200,32 +7257,9 @@ class SeleniumBatchPortalProbe:
                 current.get_attribute("aria-invalid") or ""
             ).strip().casefold() == "true":
                 return False
-
-            roots = current.find_elements(
-                By.XPATH,
-                "./ancestor::div[contains(concat(' ', "
-                "normalize-space(@class), ' '), "
-                "' MuiAutocomplete-root ')][1]",
-            )
-            if not roots:
-                return False
-
-            root = roots[0]
-            root_class = str(
-                root.get_attribute("class") or ""
-            )
-            if "MuiAutocomplete-hasClearIcon" not in root_class:
-                return False
-            if "Mui-expanded" in root_class:
-                return False
-
-            clear_buttons = root.find_elements(
-                By.CSS_SELECTOR,
-                "button.MuiAutocomplete-clearIndicator",
-            )
-            return any(
-                button.is_displayed() and button.is_enabled()
-                for button in clear_buttons
+            return self._mui_autocomplete_has_selected_object(
+                resolver=resolver,
+                key=key,
             )
         except Exception:
             return False
@@ -7309,8 +7343,22 @@ class SeleniumBatchPortalProbe:
                 key,
                 timeout_seconds=min(0.75, self._timeout_seconds),
             )
+            nested_values: list[str] = []
+            try:
+                nested_inputs = current.find_elements(
+                    By.CSS_SELECTOR,
+                    "input",
+                )
+                nested_values.extend(
+                    str(element.get_attribute("value") or "")
+                    for element in nested_inputs
+                )
+            except Exception:
+                pass
+
             candidates = (
                 str(current.get_attribute("value") or ""),
+                *nested_values,
                 str(getattr(current, "text", "") or ""),
                 str(current.get_attribute("textContent") or ""),
                 str(current.get_attribute("data-value") or ""),

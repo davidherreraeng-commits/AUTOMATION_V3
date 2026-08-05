@@ -200,7 +200,10 @@ def test_should_populate_all_general_fields_without_validation_or_save() -> None
             FakeElement(),
         )
         element.value = kwargs["expected"]
-        if kwargs["key"] == "general.typology":
+        if kwargs["key"] in {
+            "general.contract_type",
+            "general.typology",
+        }:
             element.committed = True
 
     subject._select_autocomplete_and_confirm = (  # type: ignore[method-assign]
@@ -262,7 +265,10 @@ def test_should_select_procedure_after_contract_type_repopulates_catalog() -> No
         calls.append(key)
         element = resolver.elements.setdefault(key, FakeElement())
         element.value = kwargs["expected"]
-        if key == "general.typology":
+        if key in {
+            "general.contract_type",
+            "general.typology",
+        }:
             element.committed = True
         if key == "general.contract_type":
             # Comportamiento observado en Gestión Transparente: al elegir el
@@ -347,7 +353,10 @@ def test_should_use_canonical_portal_text_for_persisted_alias() -> None:
         selected.append((kwargs["key"], kwargs["expected"]))
         element = resolver.elements.setdefault(kwargs["key"], FakeElement())
         element.value = kwargs["expected"]
-        if kwargs["key"] == "general.typology":
+        if kwargs["key"] in {
+            "general.contract_type",
+            "general.typology",
+        }:
             element.committed = True
 
     subject._select_autocomplete_and_confirm = select_autocomplete  # type: ignore[method-assign]

@@ -139,10 +139,15 @@ class FakeControl:
                     self.value = ""
                     self._selected_all = False
                 continue
+            if value == Keys.ESCAPE:
+                self.expanded = False
+                continue
+            if value == Keys.TAB:
+                self.expanded = False
+                continue
             if value in {
                 Keys.ARROW_DOWN,
                 Keys.ENTER,
-                Keys.TAB,
                 Keys.CONTROL,
             }:
                 continue
@@ -557,3 +562,52 @@ def test_committed_state_rejects_open_popup() -> None:
         resolver=FakeResolver(control),
         key="general.typology",
     ) is False
+
+def test_committed_open_catalog_closes_without_reselecting() -> None:
+    subject = probe()
+    configure_clicks(subject)
+    expected = "Contrato de Prestación de Servicios"
+    control = FakeControl(
+        value=expected,
+        committed=True,
+        expanded=True,
+    )
+    driver = FakeDriver([])
+
+    subject._select_autocomplete_and_confirm(
+        driver=driver,
+        waits=FakeWaits(driver),
+        resolver=FakeResolver(control),
+        key="general.contract_type",
+        expected=expected,
+        code="GENERAL_CONTRACT_TYPE_SELECTION_FAILED",
+        label="Tipo de Contrato",
+        require_committed_state=True,
+    )
+
+    assert control.expanded is False
+    assert Keys.ESCAPE in control.sent
+    assert Keys.TAB in control.sent
+    assert control.clicks == 0
+
+
+def test_resolved_value_reads_nested_input_before_wrapper_text() -> None:
+    subject = probe()
+    expected = "Contrato de Prestación de Servicios"
+    nested = FakeControl(value=expected)
+
+    class Wrapper(FakeControl):
+        def __init__(self) -> None:
+            super().__init__(tag_name="div", text="Texto auxiliar")
+
+        def find_elements(self, by, value):
+            if by == By.CSS_SELECTOR and value == "input":
+                return [nested]
+            return super().find_elements(by, value)
+
+    wrapper = Wrapper()
+
+    assert subject._resolved_autocomplete_value(
+        resolver=FakeResolver(wrapper),
+        key="general.contract_type",
+    ) == expected
