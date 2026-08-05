@@ -5100,6 +5100,10 @@ class SeleniumBatchPortalProbe:
             expected=contract.procedure,
             code="GENERAL_PROCEDURE_SELECTION_FAILED",
             label="Procedimiento o Causal",
+            # El portal puede decorar la causal con el nombre o código de
+            # la modalidad. La coincidencia sigue siendo semántica y se
+            # limita al listbox perteneciente a este control.
+            allow_decorated_value=True,
         )
         flags["procedure_selected"] = True
 
@@ -6270,14 +6274,23 @@ class SeleniumBatchPortalProbe:
                         waits=waits,
                         expected=expected,
                         allow_decorated_value=allow_decorated_value,
+                        control=element,
                     )
                     or ""
                 )
 
                 if not selected_option:
+                    # Nunca confirme a ciegas la primera opción del catálogo.
+                    # El fallback de teclado solo pulsa Enter cuando la opción
+                    # activa pertenece al control objetivo y coincide con el
+                    # valor esperado.
                     self._select_catalog_with_keyboard(
+                        driver=driver,
                         resolver=resolver,
                         key=key,
+                        expected=expected,
+                        allow_decorated_value=allow_decorated_value,
+                        control=element,
                     )
                 else:
                     self._blur_catalog_control(
@@ -6445,11 +6458,23 @@ class SeleniumBatchPortalProbe:
             "visible_options": [],
         }
 
+        current: WebElement | None = None
         try:
             current = resolver.visible(
                 key,
                 timeout_seconds=min(1.0, self._timeout_seconds),
             )
+            # Reabra el catálogo objetivo antes de fotografiarlo. Así la
+            # evidencia conserva su propio aria-controls y no el listbox del
+            # control siguiente que pudiera haber quedado enfocado.
+            try:
+                self._open_catalog_control(
+                    element=current,
+                    expected=expected,
+                )
+            except Exception:
+                pass
+
             attributes = {}
             for attribute in (
                 "id",
@@ -6519,9 +6544,9 @@ class SeleniumBatchPortalProbe:
 
         try:
             option_snapshots = []
-            options = driver.find_elements(
-                By.CSS_SELECTOR,
-                "[role='listbox'] [role='option']",
+            options = self._catalog_options_for_control(
+                driver=driver,
+                control=current,
             )
             for option in options:
                 try:
@@ -6633,6 +6658,7 @@ class SeleniumBatchPortalProbe:
         expected: str | None,
         allow_decorated_value: bool,
         first_visible: bool = False,
+        control: WebElement | None = None,
     ) -> str | None:
         """Pulsa una opción visible del listbox Material UI.
 
@@ -6642,9 +6668,9 @@ class SeleniumBatchPortalProbe:
 
         def locate_option(current_driver: WebDriver):
             try:
-                options = current_driver.find_elements(
-                    By.CSS_SELECTOR,
-                    "[role='listbox'] [role='option']",
+                options = self._catalog_options_for_control(
+                    driver=current_driver,
+                    control=control,
                 )
             except Exception:
                 return False
@@ -6702,6 +6728,58 @@ class SeleniumBatchPortalProbe:
             )
         return None
 
+    @staticmethod
+    def _catalog_options_for_control(
+        *,
+        driver: WebDriver,
+        control: WebElement | None,
+    ) -> list[WebElement]:
+        """Devuelve únicamente las opciones del catálogo objetivo.
+
+        Material UI renderiza sus listbox en un portal fuera del árbol del
+        input. La relación confiable es ``aria-controls`` -> id del listbox.
+        Buscar todas las opciones visibles de la página puede mezclar dos
+        catálogos y seleccionar un valor en el control siguiente.
+        """
+
+        if control is None:
+            return list(
+                driver.find_elements(
+                    By.CSS_SELECTOR,
+                    "[role='listbox'] [role='option']",
+                )
+            )
+
+        listbox_id = str(
+            control.get_attribute("aria-controls") or ""
+        ).strip()
+        if not listbox_id:
+            expanded = str(
+                control.get_attribute("aria-expanded") or ""
+            ).strip().casefold()
+            if expanded != "true":
+                return []
+            # Compatibilidad con widgets que exponen el estado expandido pero
+            # omiten aria-controls. Al exigir aria-expanded=true evitamos usar
+            # el popup de un catálogo vecino cuando el objetivo está cerrado.
+            return list(
+                driver.find_elements(
+                    By.CSS_SELECTOR,
+                    "[role='listbox'] [role='option']",
+                )
+            )
+
+        listboxes = driver.find_elements(By.ID, listbox_id)
+        if not listboxes:
+            return []
+
+        return list(
+            listboxes[0].find_elements(
+                By.CSS_SELECTOR,
+                "[role='option']",
+            )
+        )
+
     @classmethod
     def _catalog_option_matches(
         cls,
@@ -6743,16 +6821,52 @@ class SeleniumBatchPortalProbe:
     def _select_catalog_with_keyboard(
         self,
         *,
+        driver: WebDriver,
         resolver: ElementResolver,
         key: str,
-    ) -> None:
-        element = resolver.clickable(
+        expected: str | None,
+        allow_decorated_value: bool,
+        first_visible: bool = False,
+        control: WebElement | None = None,
+    ) -> bool:
+        """Confirma por teclado solo una opción activa verificable.
+
+        El comportamiento anterior pulsaba ``ArrowDown`` y ``Enter`` aunque
+        el filtro no hubiera encontrado el valor esperado. Eso podía elegir
+        la primera causal disponible y desplazar el foco al Tipo de Contrato.
+        """
+
+        element = control or resolver.clickable(
             key,
             timeout_seconds=min(3.0, self._timeout_seconds),
         )
         element.send_keys(Keys.ARROW_DOWN)
+
+        active_id = str(
+            element.get_attribute("aria-activedescendant") or ""
+        ).strip()
+        if not active_id:
+            return False
+
+        active_options = driver.find_elements(By.ID, active_id)
+        if not active_options:
+            return False
+
+        option_text = self._catalog_option_text(active_options[0])
+        if not option_text:
+            return False
+
+        if not first_visible:
+            if expected is None or not self._catalog_option_matches(
+                actual=option_text,
+                expected=expected,
+                allow_decorated_value=allow_decorated_value,
+            ):
+                return False
+
         element.send_keys(Keys.ENTER)
         element.send_keys(Keys.TAB)
+        return True
 
     def _blur_catalog_control(
         self,
@@ -6935,13 +7049,19 @@ class SeleniumBatchPortalProbe:
                         expected=None,
                         allow_decorated_value=True,
                         first_visible=True,
+                        control=element,
                     )
                     or ""
                 )
                 if not selected_option:
                     self._select_catalog_with_keyboard(
+                        driver=driver,
                         resolver=resolver,
                         key=key,
+                        expected=None,
+                        allow_decorated_value=True,
+                        first_visible=True,
+                        control=element,
                     )
                 else:
                     self._blur_catalog_control(

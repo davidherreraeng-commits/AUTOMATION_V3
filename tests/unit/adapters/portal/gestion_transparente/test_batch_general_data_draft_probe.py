@@ -135,6 +135,7 @@ def test_should_populate_all_general_fields_without_validation_or_save() -> None
     subject = probe()
     resolver = FakeResolver()
     calls: list[tuple[str, str]] = []
+    selection_calls: list[dict[str, object]] = []
 
     subject._scroll_into_view = lambda *args, **kwargs: None  # type: ignore[method-assign]
     subject._write_currency_and_confirm = (  # type: ignore[method-assign]
@@ -146,7 +147,10 @@ def test_should_populate_all_general_fields_without_validation_or_save() -> None
         lambda **kwargs: calls.append(("radio", kwargs["key"]))
     )
     subject._select_autocomplete_and_confirm = (  # type: ignore[method-assign]
-        lambda **kwargs: calls.append((kwargs["key"], kwargs["expected"]))
+        lambda **kwargs: (
+            calls.append((kwargs["key"], kwargs["expected"])),
+            selection_calls.append(dict(kwargs)),
+        )
     )
 
     flags = subject._populate_general_data_draft(
@@ -167,6 +171,12 @@ def test_should_populate_all_general_fields_without_validation_or_save() -> None
     assert ("radio", "general.other_currency_no") in calls
     assert ("general.process_type", "Contratación Directa") in calls
     assert ("general.typology", "Prestación de Servicios") in calls
+    typology_call = next(
+        call
+        for call in selection_calls
+        if call["key"] == "general.typology"
+    )
+    assert typology_call["allow_decorated_value"] is True
     assert ("general.contract_type", "Servicios") in calls
 
 
